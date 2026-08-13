@@ -67,6 +67,28 @@ Each followed player has an **×** to stop following them. Removing one half of 
 pair removes the partner too — otherwise their matches would keep appearing and the row
 could never be cleared.
 
+### Selections
+
+The follow list is a working set you can name and keep. **Selections** in the top bar
+saves the current list under a name, lists everything you have saved, and loads or
+deletes any of them. Loading a selection also restores the discipline it was saved in,
+so an all-WD selection lands you on WD rather than wherever you happened to be.
+
+Editing the list by hand (adding, removing, or picking a country) drops the saved name —
+the button falls back to showing a plain count — so you always know whether you are
+looking at a saved selection or a scratch one. Saving under an existing name overwrites
+it.
+
+**Whole country** — the picker has a strip of country chips above the list, each with the
+number of entries that country has in the current draw. Clicking one follows every one of
+its entries; clicking again clears them. That makes "everyone from Denmark" a single
+click, and it composes with hand-picking, so building "all of Japan plus Axelsen" is
+quick. It is a bulk action rather than a live filter: the chip fills your selection once,
+and you are then free to trim it.
+
+Everything lives in `localStorage` on the one browser — there is no account and nothing
+is uploaded. A selection is still shareable through the URL hash.
+
 **Head-to-head** opens from anywhere a real pairing is shown: any match card in the
 Schedule or Players view, any opponent chip, or any node in the Bracket. It shows the
 career record, a win-share bar, **both players' BWF World and Race-to-Finals rankings**,
@@ -488,7 +510,8 @@ also the best one:
 GitHub Pages (static)
  └── index.html + styles.css + app.js
       ├── fetch() → extranet-lv.bwfbadminton.com   (draws, schedule, rankings, h2h)
-      ├── localStorage                              (followed players, skin, mode)
+      ├── localStorage                              (followed players, saved
+      │                                              selections, ranks, skin, mode)
       ├── sessionStorage                            (5-minute response cache)
       └── serialised request queue, ~320 ms apart   (be polite to BWF)
 ```

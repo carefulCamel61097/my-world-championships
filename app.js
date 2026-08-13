@@ -132,6 +132,8 @@ const state = {
   daysLoaded: new Set(),
   playerCache: {},       // playerId:cat -> detail bundle promise
   ranks: {},             // cat -> { entryKey: bwfRank }
+  presets: [],           // saved named selections
+  activePreset: null,    // which one the working set came from, if any
   zoom: 1,
   pan: { x: 0, y: 0 },
 };
@@ -139,6 +141,7 @@ const state = {
 function persistSelection() {
   store.write('players', Array.from(state.selected));
   syncHash();
+  if (document.getElementById('selList')) renderPresetPanel();
 }
 
 function syncHash() {
@@ -757,6 +760,7 @@ function unfollow(playerId) {
   for (const id of ids) state.selected.delete(id);
 
   if (ids.has(String(state.active))) state.active = null;
+  state.activePreset = null;          // hand-edited, no longer a saved selection
   persistSelection();
   renderAll();
 }
@@ -1559,7 +1563,159 @@ function rankingRows(a, b) {
 
 function closeH2H() { $('#h2h').hidden = true; }
 
+/* ============================ saved selections ============================
+
+   A selection is just a named list of player ids kept in localStorage. The
+   live follow list is always the working set; saving snapshots it, loading
+   replaces it. The discipline is stored too, so loading an all-WD selection
+   lands you on WD rather than whatever you happened to be looking at.
+   ======================================================================== */
+
+function loadPresets() {
+  const list = store.read('presets', []);
+  return Array.isArray(list) ? list : [];
+}
+
+function writePresets(list) {
+  state.presets = list;
+  store.write('presets', list);
+}
+
+function presetId() {
+  // Date.now() is fine here; ids only need to be unique within one browser.
+  return 'p' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36);
+}
+
+function saveCurrentSelection(name) {
+  const clean = String(name || '').trim().slice(0, 40);
+  if (!clean || !state.selected.size) return false;
+
+  const list = loadPresets();
+  const players = Array.from(state.selected);
+  const existing = list.find(p => p.name.toLowerCase() === clean.toLowerCase());
+
+  if (existing) {
+    existing.players = players;
+    existing.cat = state.cat;
+  } else {
+    list.push({ id: presetId(), name: clean, players, cat: state.cat });
+  }
+  writePresets(list);
+  state.activePreset = (existing && existing.id) || list[list.length - 1].id;
+  return true;
+}
+
+function applyPreset(id) {
+  const p = loadPresets().find(x => x.id === id);
+  if (!p) return;
+  state.selected = new Set(p.players);
+  state.active = null;
+  state.activePreset = p.id;
+  persistSelection();
+  if (p.cat && CATS.includes(p.cat) && p.cat !== state.cat) setCat(p.cat);
+  else renderAll();
+  renderPresetPanel();
+}
+
+function deletePreset(id) {
+  writePresets(loadPresets().filter(p => p.id !== id));
+  if (state.activePreset === id) state.activePreset = null;
+  renderPresetPanel();
+}
+
+function renderPresetPanel() {
+  const list = loadPresets();
+  const box = $('#selList');
+  box.innerHTML = '';
+
+  if (!list.length) {
+    box.innerHTML = '<div class="sel-empty">Nothing saved yet. Pick some players, then name and save them here.</div>';
+  }
+
+  for (const p of list) {
+    const row = el('div', 'sel-row' + (p.id === state.activePreset ? ' is-active' : ''));
+    row.innerHTML = `
+      <button class="sel-load" type="button">
+        <span class="sel-nm">${esc(p.name)}</span>
+        <span class="sel-meta">${p.players.length} player${p.players.length === 1 ? '' : 's'}
+          &middot; ${esc((p.cat || '').toUpperCase())}</span>
+      </button>
+      <button class="sel-x" type="button" title="Delete ${esc(p.name)}" aria-label="Delete ${esc(p.name)}">&times;</button>`;
+    row.querySelector('.sel-load').onclick = () => { applyPreset(p.id); closeSelPanel(); };
+    row.querySelector('.sel-x').onclick = e => { e.stopPropagation(); deletePreset(p.id); };
+    box.appendChild(row);
+  }
+
+  // Label the button with whatever is currently loaded.
+  const current = list.find(p => p.id === state.activePreset);
+  const n = state.selected.size;
+  $('#selCurrent').textContent = current
+    ? current.name
+    : (n ? `${n} player${n === 1 ? '' : 's'}` : 'Selections');
+
+  const save = $('#selSave');
+  save.disabled = !state.selected.size;
+  save.title = state.selected.size ? '' : 'Select some players first';
+}
+
+function openSelPanel() {
+  renderPresetPanel();
+  $('#selPanel').hidden = false;
+  $('#selToggle').setAttribute('aria-expanded', 'true');
+  const cur = loadPresets().find(p => p.id === state.activePreset);
+  $('#selName').value = cur ? cur.name : '';
+}
+
+function closeSelPanel() {
+  $('#selPanel').hidden = true;
+  $('#selToggle').setAttribute('aria-expanded', 'false');
+}
+
 /* ============================ picker ============================ */
+
+/** Countries represented in a draw, with the player ids that make them up. */
+function countriesInDraw(draw) {
+  const map = new Map();
+  if (!draw) return [];
+  for (const entry of draw.entries.values()) {
+    const code = entry.countryCode || '—';
+    if (!map.has(code)) map.set(code, { code, flag: entry.flag, players: new Set(), entries: 0 });
+    const c = map.get(code);
+    c.entries++;
+    for (const p of entry.players) c.players.add(String(p.id));
+  }
+  return Array.from(map.values()).sort((a, b) =>
+    b.entries - a.entries || a.code.localeCompare(b.code));
+}
+
+function renderCountryChips() {
+  const bar = $('#countryChips');
+  const draw = state.draws[state.cat];
+  bar.innerHTML = '';
+  if (!draw) return;
+
+  for (const c of countriesInDraw(draw)) {
+    const ids = Array.from(c.players);
+    const on = ids.length && ids.every(id => state.selected.has(id));
+    const chip = el('button', 'cchip' + (on ? ' is-on' : ''));
+    chip.type = 'button';
+    chip.title = on ? `Remove all ${c.code}` : `Follow all ${c.code} (${c.entries})`;
+    chip.innerHTML = `${c.flag ? `<img src="${esc(c.flag)}" alt="">` : ''}
+      <span>${esc(c.code)}</span><i>${c.entries}</i>`;
+    chip.onclick = () => {
+      // Toggle the whole country: add every player unless they're all already
+      // followed, in which case clear them.
+      for (const id of ids) {
+        if (on) state.selected.delete(id);
+        else state.selected.add(id);
+      }
+      state.activePreset = null;      // the working set no longer matches a saved one
+      persistSelection();
+      renderPicker();
+    };
+    bar.appendChild(chip);
+  }
+}
 
 function openPicker() {
   $('#pickerCat').textContent = CAT_LABEL[state.cat];
@@ -1580,6 +1736,7 @@ function renderPicker() {
   const draw = state.draws[state.cat];
   const q = $('#pickerSearch').value.trim().toLowerCase();
   list.innerHTML = '';
+  renderCountryChips();
 
   if (!draw) {
     list.appendChild(el('div', 'status', '<span class="spinner"></span>Loading the draw&hellip;'));
@@ -1608,6 +1765,7 @@ function renderPicker() {
         if (nowOn) state.selected.delete(String(p.id));
         else state.selected.add(String(p.id));
       }
+      state.activePreset = null;      // hand-edited, no longer a saved selection
       persistSelection();
       renderPicker();
       updatePickerCount();
@@ -1706,6 +1864,7 @@ function initHotkeys() {
     if (e.key === 'Escape') {
       if (!$('#h2h').hidden) { closeH2H(); return; }
       if (!$('#picker').hidden) { closePicker(); return; }
+      if (!$('#selPanel').hidden) { closeSelPanel(); return; }
       return;
     }
 
@@ -1713,7 +1872,7 @@ function initHotkeys() {
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     if (e.ctrlKey || e.altKey || e.metaKey) return;
-    if (!$('#picker').hidden || !$('#h2h').hidden) return;
+    if (!$('#picker').hidden || !$('#h2h').hidden || !$('#selPanel').hidden) return;
 
     // Zoom the bracket. Covers the main row (+ needs Shift on most layouts, so
     // '=' counts too) and the numpad, via e.code so layout doesn't matter.
@@ -1789,6 +1948,28 @@ async function init() {
   $('#picker').onclick = e => { if (e.target.id === 'picker') closePicker(); };
   $('#closeH2h').onclick = closeH2H;
   $('#h2h').onclick = e => { if (e.target.id === 'h2h') closeH2H(); };
+
+  // --- saved selections ---
+  state.presets = loadPresets();
+  $('#selToggle').onclick = e => {
+    e.stopPropagation();
+    if ($('#selPanel').hidden) openSelPanel(); else closeSelPanel();
+  };
+  $('#selPanel').onclick = e => e.stopPropagation();
+  document.addEventListener('click', () => { if (!$('#selPanel').hidden) closeSelPanel(); });
+
+  const doSave = () => {
+    if (saveCurrentSelection($('#selName').value)) {
+      renderPresetPanel();
+      $('#selName').blur();
+    }
+  };
+  $('#selSave').onclick = doSave;
+  $('#selName').onkeydown = e => {
+    if (e.key === 'Enter') { e.preventDefault(); doSave(); }
+    if (e.key === 'Escape') { e.preventDefault(); closeSelPanel(); }
+  };
+  renderPresetPanel();
 
   initBracketInteraction();
   initHotkeys();
