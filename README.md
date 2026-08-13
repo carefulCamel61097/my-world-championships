@@ -19,7 +19,20 @@ python -m http.server 8000
 # → http://localhost:8000
 ```
 
-To publish: push to GitHub and enable Pages on the branch root.
+Deployment is GitHub Pages straight from `main` at the repository root — no workflow, no
+build step, so pushing to `main` *is* the deploy:
+
+```bash
+git push                     # that's the whole deploy
+```
+
+It was enabled once with:
+
+```bash
+gh repo create my-world-championships --public --source=. --push
+gh api -X POST repos/<owner>/my-world-championships/pages \
+  -f "source[branch]=main" -f "source[path]=/"
+```
 
 | File | Role |
 |---|---|
@@ -520,6 +533,12 @@ browser, which is a much bigger commitment.
 - Bracket interaction driven with synthetic mouse events: a click opens the head-to-head,
   a drag pans without selecting text or opening the popup, a double-click selects
   nothing, and `F` reproduces the Fit button exactly.
+- **Checked against the deployed site, not just localhost.** Loading
+  `carefulcamel61097.github.io` in a real Chrome produced 31 BWF API requests, all HTTP
+  200, with `Access-Control-Allow-Origin` reflecting the Pages origin exactly — the
+  page renders rankings, season strip and full draw with no console errors. This is the
+  assumption the whole no-backend design rests on, so it is worth re-checking if the
+  page ever goes blank.
 
 ### Bracket geometry
 
