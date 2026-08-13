@@ -122,7 +122,12 @@ const store = {
 
 const state = {
   view: 'schedule',
-  cat: 'ms',
+  // Disciplines are independent on/off filters, all on by default: a personal
+  // schedule should show your MS and WD players together without switching.
+  cats: new Set(CATS),
+  // The Bracket view is inherently one draw at a time, so it keeps its own
+  // choice rather than trying to render five brackets at once.
+  bracketCat: 'ms',
   day: 'all',
   onlyMine: true,
   selected: new Set(store.read('players', [])),
@@ -144,13 +149,24 @@ function persistSelection() {
   if (document.getElementById('selList')) renderPresetPanel();
 }
 
+/** Enabled disciplines in canonical order. */
+function activeCats() {
+  return CATS.filter(c => state.cats.has(c));
+}
+
+function allCatsOn() {
+  return state.cats.size === CATS.length;
+}
+
 function syncHash() {
+  // Built by hand rather than with URLSearchParams, which percent-encodes the
+  // commas and turns a shareable link into p=57945%2C87442.
+  const parts = [];
   const p = Array.from(state.selected).join(',');
-  const h = new URLSearchParams();
-  if (p) h.set('p', p);
-  h.set('c', state.cat);
-  h.set('v', state.view);
-  history.replaceState(null, '', '#' + h.toString());
+  if (p) parts.push('p=' + p);
+  parts.push('c=' + (allCatsOn() ? 'all' : activeCats().join(',')));
+  parts.push('v=' + state.view);
+  history.replaceState(null, '', '#' + parts.join('&'));
 }
 
 function readHash() {
@@ -158,8 +174,19 @@ function readHash() {
   const h = new URLSearchParams(location.hash.slice(1));
   const p = h.get('p');
   if (p) state.selected = new Set(p.split(',').filter(Boolean));
+
   const c = h.get('c');
-  if (c && CATS.includes(c)) state.cat = c;
+  if (c === 'all') {
+    state.cats = new Set(CATS);
+  } else if (c) {
+    // Comma list now; a bare "ms" from an older link means just that one.
+    const want = c.split(',').map(s => s.trim()).filter(s => CATS.includes(s));
+    if (want.length) {
+      state.cats = new Set(want);
+      state.bracketCat = want[0];
+    }
+  }
+
   const v = h.get('v');
   if (VIEWS.includes(v)) state.view = v;
 }
@@ -616,11 +643,12 @@ function renderDaybar() {
 
 function renderSchedule() {
   const wrap = $('#scheduleList');
-  const draw = state.draws[state.cat];
+  const cats = activeCats();
+  const loaded = cats.filter(c => state.draws[c]);
   wrap.innerHTML = '';
 
-  if (!draw) {
-    wrap.appendChild(el('div', 'status', '<span class="spinner"></span>Loading the draw&hellip;'));
+  if (!loaded.length) {
+    wrap.appendChild(el('div', 'status', '<span class="spinner"></span>Loading the draws&hellip;'));
     return;
   }
 
@@ -637,13 +665,22 @@ function renderSchedule() {
   }
 
   // Byes are bracket bookkeeping, not fixtures — never list them.
-  let matches = draw.matches.filter(m => !draw.byeCodes.has(String(m.code))).map(enrich);
+  let matches = [];
+  for (const c of loaded) {
+    const draw = state.draws[c];
+    for (const m of draw.matches) {
+      if (draw.byeCodes.has(String(m.code))) continue;
+      matches.push(enrich(m));
+    }
+  }
   if (state.onlyMine) matches = matches.filter(matchIsMine);
   if (state.day !== 'all') matches = matches.filter(m => dayKeyOf(m) === state.day);
 
   if (!matches.length) {
+    const label = cats.length === CATS.length ? 'matches'
+      : cats.map(c => c.toUpperCase()).join('/') + ' matches';
     const e = el('div', 'empty');
-    e.innerHTML = `<h3>Nothing here</h3><p>No ${esc(CAT_LABEL[state.cat])} matches${
+    e.innerHTML = `<h3>Nothing here</h3><p>No ${esc(label)}${
       state.day === 'all' ? '' : ' on this day'} for your selection yet.</p>`;
     wrap.appendChild(e);
     return;
@@ -668,7 +705,11 @@ function renderSchedule() {
     list.sort((a, b) => {
       const ta = utcDate(a), tb = utcDate(b);
       if (ta && tb) return ta - tb;
-      return ROUND_ORDER.indexOf(a.roundName) - ROUND_ORDER.indexOf(b.roundName);
+      // Unscheduled: earliest round first, then keep disciplines together.
+      const ra = ROUND_ORDER.indexOf(a.roundName), rb = ROUND_ORDER.indexOf(b.roundName);
+      if (ra !== rb) return ra - rb;
+      return CATS.indexOf((a.eventName || '').toLowerCase()) -
+             CATS.indexOf((b.eventName || '').toLowerCase());
     });
 
     const g = el('div', 'daygroup');
@@ -684,10 +725,13 @@ function renderSchedule() {
 
 /* ============================ view: players ============================ */
 
-/** Every selected player we can describe, across the draws loaded so far. */
+/**
+ * Every selected player we can describe, across the draws loaded so far,
+ * restricted to the disciplines currently switched on.
+ */
 function selectedPlayers() {
   const out = new Map();
-  for (const cat of CATS) {
+  for (const cat of activeCats()) {
     const draw = state.draws[cat];
     if (!draw) continue;
     for (const entry of draw.entries.values()) {
@@ -700,9 +744,14 @@ function selectedPlayers() {
       }
     }
   }
-  // Selected players whose draw isn't loaded yet still deserve a row.
-  for (const id of state.selected) {
-    if (!out.has(id)) out.set(id, { id, player: null, cats: [], entries: [] });
+  // Selected players whose draw isn't loaded yet still deserve a row — but
+  // only while something is still loading, otherwise a player filtered out by
+  // the discipline toggles would reappear as an anonymous "Player 12345".
+  const pending = activeCats().some(c => !state.draws[c]);
+  if (pending) {
+    for (const id of state.selected) {
+      if (!out.has(id)) out.set(id, { id, player: null, cats: [], entries: [] });
+    }
   }
   return Array.from(out.values());
 }
@@ -1181,7 +1230,7 @@ function bracketSide(m, which, mine) {
 
 function renderBracket() {
   const canvas = $('#bracketCanvas');
-  const draw = state.draws[state.cat];
+  const draw = state.draws[state.bracketCat];
   canvas.innerHTML = '';
 
   if (!draw) {
@@ -1317,7 +1366,7 @@ function fitBracket() {
 
 /** Centre the view on the first followed player in this draw. */
 function jumpToMine() {
-  const draw = state.draws[state.cat];
+  const draw = state.draws[state.bracketCat];
   if (!draw) return;
   const node = $('#bracketCanvas .bnode.is-mine');
   if (!node) { fitBracket(); return; }
@@ -1422,6 +1471,17 @@ function plainName(html) {
   return (d.textContent || '').replace(/\s+/g, ' ').trim();
 }
 
+/** Which discipline a team belongs to, by finding it in a loaded draw. */
+function h2hCat(team) {
+  const key = entryKey(team);
+  if (!key) return null;
+  for (const cat of CATS) {
+    const draw = state.draws[cat];
+    if (draw && draw.entries.has(key)) return cat;
+  }
+  return null;
+}
+
 function h2hParams(teamA, teamB) {
   const pa = (teamA.players || []).map(p => p.id);
   const pb = (teamB.players || []).map(p => p.id);
@@ -1518,7 +1578,8 @@ async function openH2H(teamA, teamB) {
 
   // Season strips for both sides. Doubles pairs are represented by the first
   // named player, since a season belongs to a person, not a partnership.
-  const cat = state.cat;
+  // The pair's own discipline decides which draw column to read.
+  const cat = h2hCat(teamA) || h2hCat(teamB) || activeCats()[0];
   const idA = teamA.players[0] && teamA.players[0].id;
   const idB = teamB.players[0] && teamB.players[0].id;
   const token = ++h2hToken;
@@ -1596,9 +1657,9 @@ function saveCurrentSelection(name) {
 
   if (existing) {
     existing.players = players;
-    existing.cat = state.cat;
+    existing.cats = activeCats();
   } else {
-    list.push({ id: presetId(), name: clean, players, cat: state.cat });
+    list.push({ id: presetId(), name: clean, players, cats: activeCats() });
   }
   writePresets(list);
   state.activePreset = (existing && existing.id) || list[list.length - 1].id;
@@ -1611,16 +1672,33 @@ function applyPreset(id) {
   state.selected = new Set(p.players);
   state.active = null;
   state.activePreset = p.id;
+
+  // Restore the discipline filter it was saved with. `cat` is the older
+  // single-discipline field, kept readable so existing saves still load.
+  const cats = Array.isArray(p.cats) ? p.cats.filter(c => CATS.includes(c))
+    : (p.cat && CATS.includes(p.cat) ? [p.cat] : []);
+  if (cats.length) {
+    state.cats = new Set(cats);
+    store.write('cats', activeCats());
+    paintCatChips();
+  }
+
   persistSelection();
-  if (p.cat && CATS.includes(p.cat) && p.cat !== state.cat) setCat(p.cat);
-  else renderAll();
+  renderAll();
   renderPresetPanel();
+  ensureCats();
 }
 
 function deletePreset(id) {
   writePresets(loadPresets().filter(p => p.id !== id));
   if (state.activePreset === id) state.activePreset = null;
   renderPresetPanel();
+}
+
+function presetCatLabel(p) {
+  const cats = Array.isArray(p.cats) ? p.cats : (p.cat ? [p.cat] : []);
+  if (!cats.length || cats.length === CATS.length) return 'All disciplines';
+  return cats.map(c => c.toUpperCase()).join(' ');
 }
 
 function renderPresetPanel() {
@@ -1638,7 +1716,7 @@ function renderPresetPanel() {
       <button class="sel-load" type="button">
         <span class="sel-nm">${esc(p.name)}</span>
         <span class="sel-meta">${p.players.length} player${p.players.length === 1 ? '' : 's'}
-          &middot; ${esc((p.cat || '').toUpperCase())}</span>
+          &middot; ${esc(presetCatLabel(p))}</span>
       </button>
       <button class="sel-x" type="button" title="Delete ${esc(p.name)}" aria-label="Delete ${esc(p.name)}">&times;</button>`;
     row.querySelector('.sel-load').onclick = () => { applyPreset(p.id); closeSelPanel(); };
@@ -1673,11 +1751,25 @@ function closeSelPanel() {
 
 /* ============================ picker ============================ */
 
-/** Countries represented in a draw, with the player ids that make them up. */
-function countriesInDraw(draw) {
+/** All entries across the switched-on disciplines, each tagged with its draw. */
+function pickerEntries() {
+  const out = [];
+  for (const cat of activeCats()) {
+    const draw = state.draws[cat];
+    if (!draw) continue;
+    for (const entry of draw.entries.values()) out.push(entry);
+  }
+  return out;
+}
+
+/**
+ * Countries across the switched-on disciplines, with the player ids that make
+ * them up. With every discipline on, one click on THA follows every Thai
+ * player in the tournament.
+ */
+function countriesInScope() {
   const map = new Map();
-  if (!draw) return [];
-  for (const entry of draw.entries.values()) {
+  for (const entry of pickerEntries()) {
     const code = entry.countryCode || '—';
     if (!map.has(code)) map.set(code, { code, flag: entry.flag, players: new Set(), entries: 0 });
     const c = map.get(code);
@@ -1690,11 +1782,9 @@ function countriesInDraw(draw) {
 
 function renderCountryChips() {
   const bar = $('#countryChips');
-  const draw = state.draws[state.cat];
   bar.innerHTML = '';
-  if (!draw) return;
 
-  for (const c of countriesInDraw(draw)) {
+  for (const c of countriesInScope()) {
     const ids = Array.from(c.players);
     const on = ids.length && ids.every(id => state.selected.has(id));
     const chip = el('button', 'cchip' + (on ? ' is-on' : ''));
@@ -1718,7 +1808,9 @@ function renderCountryChips() {
 }
 
 function openPicker() {
-  $('#pickerCat').textContent = CAT_LABEL[state.cat];
+  $('#pickerCat').textContent = allCatsOn()
+    ? 'all disciplines'
+    : activeCats().map(c => c.toUpperCase()).join(', ');
   $('#picker').hidden = false;
   $('#pickerSearch').value = '';
   renderPicker();
@@ -1733,21 +1825,26 @@ function closePicker() {
 
 function renderPicker() {
   const list = $('#pickerList');
-  const draw = state.draws[state.cat];
   const q = $('#pickerSearch').value.trim().toLowerCase();
   list.innerHTML = '';
   renderCountryChips();
 
-  if (!draw) {
-    list.appendChild(el('div', 'status', '<span class="spinner"></span>Loading the draw&hellip;'));
+  const all = pickerEntries();
+  if (!all.length) {
+    list.appendChild(el('div', 'status', '<span class="spinner"></span>Loading the draws&hellip;'));
     return;
   }
 
-  const entries = Array.from(draw.entries.values())
-    .filter(e => !q || e.name.toLowerCase().includes(q) || (e.countryCode || '').toLowerCase().includes(q))
+  const entries = all
+    .filter(e => !q || e.name.toLowerCase().includes(q)
+      || (e.countryCode || '').toLowerCase().includes(q)
+      || e.cat === q)
     .sort((a, b) => {
+      // Seeds first within a discipline, then disciplines in canonical order.
       const sa = a.seed ? Number(a.seed) : 999, sb = b.seed ? Number(b.seed) : 999;
       if (sa !== sb) return sa - sb;
+      const ca = CATS.indexOf(a.cat), cb = CATS.indexOf(b.cat);
+      if (ca !== cb) return ca - cb;
       return a.name.localeCompare(b.name);
     });
 
@@ -1756,7 +1853,8 @@ function renderPicker() {
     const row = el('div', 'pk' + (on ? ' is-on' : ''));
     row.innerHTML = `
       ${flagImg(e.flag, e.countryCode)}
-      <span class="pk-nm">${esc(e.name)}<small>${esc(e.countryCode || '')}${
+      <span class="pk-nm">${esc(e.name)}<small><b class="pk-cat">${esc(e.cat.toUpperCase())}</b>
+        ${esc(e.countryCode || '')}${
         e.seed ? ' &middot; seed ' + esc(seedText(e.seed)) : ''}</small></span>
       <span class="pk-add">${on ? 'Following' : 'Follow'}</span>`;
     row.onclick = () => {
@@ -1815,25 +1913,74 @@ function setView(v) {
   }
 }
 
-async function setCat(c) {
-  state.cat = c;
+function paintCatChips() {
   $$('.cat').forEach(b => {
-    const on = b.dataset.cat === c;
+    const c = b.dataset.cat;
+    if (c === 'all') {
+      b.classList.toggle('is-active', allCatsOn());
+      return;
+    }
+    const on = state.cats.has(c);
     b.classList.toggle('is-active', on);
-    b.setAttribute('aria-selected', String(on));
+    b.setAttribute('aria-pressed', String(on));
   });
+  $$('.bcat').forEach(b => b.classList.toggle('is-active', b.dataset.bcat === state.bracketCat));
+}
+
+/** Toggle one discipline on or off. Turning the last one off is a no-op. */
+function toggleCat(c) {
+  if (c === 'all') {
+    state.cats = new Set(CATS);
+  } else if (state.cats.has(c)) {
+    if (state.cats.size === 1) return;          // never leave nothing showing
+    state.cats.delete(c);
+  } else {
+    state.cats.add(c);
+  }
+  store.write('cats', activeCats());
+  paintCatChips();
   syncHash();
   renderAll();
-  try {
-    await loadDraw(c);
-  } catch (e) {
-    showError(e);
-    return;
-  }
-  renderAll();
-  if (state.view === 'bracket') requestAnimationFrame(fitBracket);
   if (!$('#picker').hidden) renderPicker();
-  loadRankIndex(c).catch(() => { /* opponents just stay in bracket order */ });
+  ensureCats();
+}
+
+/** Show only this discipline (used by the Shift hotkey). */
+function soloCat(c) {
+  state.cats = new Set([c]);
+  store.write('cats', activeCats());
+  paintCatChips();
+  syncHash();
+  renderAll();
+  if (!$('#picker').hidden) renderPicker();
+  ensureCats();
+}
+
+function setBracketCat(c) {
+  state.bracketCat = c;
+  paintCatChips();
+  renderBracket();
+  requestAnimationFrame(() => (state.selected.size ? jumpToMine() : fitBracket()));
+  loadDraw(c).then(() => { renderBracket(); }).catch(() => {});
+}
+
+/** Make sure every switched-on discipline (and the bracket's) is loaded. */
+async function ensureCats() {
+  const want = Array.from(new Set([...activeCats(), state.bracketCat]));
+  for (const c of want) {
+    if (state.draws[c]) continue;
+    try {
+      await loadDraw(c);
+      renderAll();
+      if (!$('#picker').hidden) renderPicker();
+    } catch (e) {
+      showError(e);
+      return;
+    }
+  }
+  for (const c of activeCats()) {
+    loadRankIndex(c).catch(() => { /* opponents just stay in bracket order */ });
+  }
 }
 
 /** Cycle views / disciplines / highlighted player from the keyboard. */
@@ -1842,9 +1989,23 @@ function stepView(delta) {
   setView(VIEWS[(i + delta + VIEWS.length) % VIEWS.length]);
 }
 
+/**
+ * Shift cycles disciplines. In the Bracket view that means the drawn bracket;
+ * elsewhere it solos each discipline in turn and then returns to showing all,
+ * which keeps the "move the category to the right" feel now that the chips are
+ * independent toggles.
+ */
 function stepCat(delta) {
-  const i = CATS.indexOf(state.cat);
-  setCat(CATS[(i + delta + CATS.length) % CATS.length]);
+  if (state.view === 'bracket') {
+    const i = CATS.indexOf(state.bracketCat);
+    setBracketCat(CATS[(i + delta + CATS.length) % CATS.length]);
+    return;
+  }
+  const ring = [...CATS, 'all'];
+  const cur = allCatsOn() ? 'all' : (state.cats.size === 1 ? activeCats()[0] : null);
+  const i = cur === null ? -1 : ring.indexOf(cur);
+  const next = ring[(i + delta + ring.length) % ring.length];
+  if (next === 'all') toggleCat('all'); else soloCat(next);
 }
 
 function stepPlayer(delta) {
@@ -1935,7 +2096,17 @@ async function init() {
   initTheme();
 
   $$('.tab').forEach(t => t.onclick = () => setView(t.dataset.view));
-  $$('.cat').forEach(b => b.onclick = () => setCat(b.dataset.cat));
+  $$('.cat').forEach(b => b.onclick = () => toggleCat(b.dataset.cat));
+  $$('.bcat').forEach(b => b.onclick = () => setBracketCat(b.dataset.bcat));
+
+  // Restore the discipline filter unless the URL already specified one.
+  if (!/[?&#]c=/.test(location.hash)) {
+    const saved = store.read('cats', null);
+    if (Array.isArray(saved) && saved.length) {
+      const valid = saved.filter(c => CATS.includes(c));
+      if (valid.length) { state.cats = new Set(valid); state.bracketCat = valid[0]; }
+    }
+  }
 
   $('#onlyMine').checked = state.onlyMine;
   $('#onlyMine').onchange = e => { state.onlyMine = e.target.checked; renderSchedule(); };
@@ -1978,25 +2149,29 @@ async function init() {
   // arriving at an already-open page. syncHash() writes the same string we'd
   // read back, so compare first to avoid reacting to our own updates.
   window.addEventListener('hashchange', () => {
-    const before = JSON.stringify([Array.from(state.selected).sort(), state.cat, state.view]);
+    const snap = () => JSON.stringify(
+      [Array.from(state.selected).sort(), activeCats(), state.view]);
+    const before = snap();
     readHash();
-    const after = JSON.stringify([Array.from(state.selected).sort(), state.cat, state.view]);
-    if (before === after) return;
+    if (before === snap()) return;
     store.write('players', Array.from(state.selected));
+    store.write('cats', activeCats());
+    paintCatChips();
     setView(state.view);
-    setCat(state.cat);
+    ensureCats();
   });
 
+  paintCatChips();
   setView(state.view);
-  await setCat(state.cat);
 
   // Everything below is progressive: the page is already usable. The shared
   // request queue serialises these, so they never burst the API.
   (async () => {
-    // Other draws first — they let followed players resolve in every
-    // discipline, not just the one currently selected.
+    await ensureCats();
+    // Any discipline not switched on is still worth having: it lets followed
+    // players resolve everywhere and makes toggling one back on instant.
     for (const c of CATS) {
-      if (c === state.cat) continue;
+      if (state.draws[c]) continue;
       try { await loadDraw(c); renderAll(); } catch { /* keep going */ }
     }
     // Then scheduling data: times, courts and scores, once BWF publishes them.

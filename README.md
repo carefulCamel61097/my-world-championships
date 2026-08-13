@@ -49,10 +49,17 @@ explicit choice the page follows `prefers-color-scheme`, falling back to dark.
 
 ### Views
 
-1. **Schedule** — the followed players' matches only, grouped by day, with venue time,
-   your local time, court, round, per-game scores and duration. Discipline chips switch
-   MS/WS/MD/WD/XD; a day bar filters to one day or shows all.
-2. **Players** — the follow list on the left, the highlighted player's detail on the
+The **discipline chips are independent on/off filters, all on by default** — not a
+single-choice switch. Following a men's singles player and a women's doubles pair shows
+both in one list, which is the point of a personal schedule. **All** turns everything back
+on; the last remaining discipline cannot be switched off, so the page is never empty. The
+choice persists and travels in the URL (`c=all`, or `c=ms,wd`).
+
+1. **Schedule** — the followed players' matches only, across every switched-on
+   discipline, grouped by day, with venue time, your local time, court, round, per-game
+   scores and duration. A day bar filters to one day or shows all.
+2. **Players** — the follow list on the left, filtered to the switched-on disciplines;
+   the highlighted player's detail on the
    right: photo, country, seed, BWF world ranking, career-high ranking, age, and the
    **road through the draw** — each round as its own band, showing either the confirmed
    match or every opponent they could still meet, **ordered by BWF world ranking** so the
@@ -62,6 +69,8 @@ explicit choice the page follows `prefers-color-scheme`, falling back to dark.
    connectors between. Followed players are outlined. *Fit* frames the entire draw;
    *Jump to my player* zooms to a readable level and centres on them. Scrolling moves
    the view (both axes); zooming is on the buttons, `+`/`−` and ctrl+wheel.
+   A bracket is one draw by definition, so this view keeps **its own MS/WS/MD/WD/XD
+   selector** in its toolbar, independent of the filter chips above.
 
 Each followed player has an **×** to stop following them. Removing one half of a doubles
 pair removes the partner too — otherwise their matches would keep appearing and the row
@@ -80,11 +89,14 @@ looking at a saved selection or a scratch one. Saving under an existing name ove
 it.
 
 **Whole country** — the picker has a strip of country chips above the list, each with the
-number of entries that country has in the current draw. Clicking one follows every one of
-its entries; clicking again clears them. That makes "everyone from Denmark" a single
-click, and it composes with hand-picking, so building "all of Japan plus Axelsen" is
-quick. It is a bulk action rather than a live filter: the chip fills your selection once,
-and you are then free to trim it.
+number of entries that country has **across every switched-on discipline**. With all five
+on, one click on THA follows all 12 Thai entries — singles, doubles and mixed at once.
+Clicking again clears them. It composes with hand-picking, so "all of Japan plus Axelsen"
+is quick. It is a bulk action rather than a live filter: the chip fills your selection
+once, and you are then free to trim it.
+
+The picker itself spans every switched-on discipline (272 entries with all five on), with
+a small MS/WS/MD/WD/XD badge on each row so you can tell which draw an entry belongs to.
 
 Everything lives in `localStorage` on the one browser — there is no account and nothing
 is uploaded. A selection is still shareable through the URL hash.
@@ -136,7 +148,7 @@ Selections live in `localStorage` and in the URL hash
 | Key | Action |
 |---|---|
 | `←` `→` | Previous / next view (Schedule → Players → Bracket, wrapping) |
-| `Shift` | Next discipline (MS → WS → MD → WD → XD, wrapping) |
+| `Shift` | Next discipline. In the Bracket view it changes the drawn bracket; elsewhere it shows one discipline at a time, cycling MS → WS → MD → WD → XD → all |
 | `↑` `↓` | Previous / next followed player (Players view only) |
 | `+` `−` | Zoom the bracket in / out (Bracket view only; main row **and** numpad) |
 | `0` | Reset the bracket to 100% (main row and numpad) |

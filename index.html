@@ -57,12 +57,14 @@
     <span class="tabs-hint" title="Keyboard shortcuts">&larr; &rarr; views &middot; Shift discipline &middot; &uarr; &darr; player</span>
   </nav>
 
-  <div class="catbar" role="tablist" aria-label="Discipline">
-    <button class="cat is-active" data-cat="ms" role="tab" aria-selected="true">MS</button>
-    <button class="cat" data-cat="ws" role="tab" aria-selected="false">WS</button>
-    <button class="cat" data-cat="md" role="tab" aria-selected="false">MD</button>
-    <button class="cat" data-cat="wd" role="tab" aria-selected="false">WD</button>
-    <button class="cat" data-cat="xd" role="tab" aria-selected="false">XD</button>
+  <div class="catbar" role="group" aria-label="Disciplines to include">
+    <button class="cat cat-all" data-cat="all" type="button">All</button>
+    <span class="cat-divider" aria-hidden="true"></span>
+    <button class="cat is-active" data-cat="ms" type="button" aria-pressed="true">MS</button>
+    <button class="cat is-active" data-cat="ws" type="button" aria-pressed="true">WS</button>
+    <button class="cat is-active" data-cat="md" type="button" aria-pressed="true">MD</button>
+    <button class="cat is-active" data-cat="wd" type="button" aria-pressed="true">WD</button>
+    <button class="cat is-active" data-cat="xd" type="button" aria-pressed="true">XD</button>
   </div>
 </header>
 
@@ -102,6 +104,13 @@
   <!-- ============ BRACKET VIEW ============ -->
   <section id="view-bracket" class="view">
     <div class="toolbar">
+      <div class="bracket-cats" role="group" aria-label="Draw to show">
+        <button class="bcat is-active" data-bcat="ms" type="button">MS</button>
+        <button class="bcat" data-bcat="ws" type="button">WS</button>
+        <button class="bcat" data-bcat="md" type="button">MD</button>
+        <button class="bcat" data-bcat="wd" type="button">WD</button>
+        <button class="bcat" data-bcat="xd" type="button">XD</button>
+      </div>
       <div class="zoombar">
         <button class="btn btn-ghost btn-sm" id="zoomOut" type="button" aria-label="Zoom out">&minus;</button>
         <span id="zoomLevel" class="muted">100%</span>

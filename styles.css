@@ -285,6 +285,24 @@ a { color: var(--accent-text); }
 }
 .cat:hover { border-color: var(--accent); color: var(--text); }
 .cat.is-active { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+/* Off chips stay legible — they're toggles, not disabled controls. */
+.cat:not(.is-active) { opacity: .78; }
+.cat-all { font-weight: 600; }
+.cat-divider {
+  flex: none; width: 1px; align-self: stretch; margin: 2px 4px;
+  background: var(--border-soft);
+}
+
+/* Bracket view: which draw to render (one at a time, by definition). */
+.bracket-cats { display: flex; gap: 4px; }
+.bcat {
+  appearance: none; background: transparent; color: var(--text-muted);
+  border: 1px solid var(--border-soft); border-radius: var(--radius-btn);
+  font: inherit; font-size: 12px; font-weight: 700; letter-spacing: .4px;
+  padding: 5px 11px; cursor: pointer;
+}
+.bcat:hover { border-color: var(--accent); color: var(--text); }
+.bcat.is-active { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
 
 /* ========================== saved selections ========================== */
 .dropdown { position: relative; }
@@ -646,6 +664,12 @@ a { color: var(--accent-text); }
 .pk .flag { width: 26px; height: 26px; }
 .pk-nm { font-size: 14px; min-width: 0; }
 .pk-nm small { display: block; font-size: 11.5px; color: var(--text-muted); }
+/* The picker spans every switched-on discipline, so each row says which. */
+.pk-cat {
+  display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .4px;
+  color: var(--accent-text); border: 1px solid var(--border-soft);
+  border-radius: 3px; padding: 0 4px; margin-right: 3px;
+}
 .pk-add {
   font-size: 11.5px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
   border: 1px solid var(--border); border-radius: var(--radius-pill);
