@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en" data-skin="bwf">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My World Championships 2026</title>
+<meta name="description" content="Follow your selected players through the BWF World Championships 2026. Unofficial fan tool.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%23df2027'/%3E%3Cpath d='M16 6l6 13H10z' fill='%23fff'/%3E%3Ccircle cx='16' cy='23' r='3.6' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <span class="brand-mark">WC</span>
+      <span class="brand-text">
+        <strong>My World Championships</strong>
+        <small>New Delhi &middot; 17&ndash;23 August 2026</small>
+      </span>
+    </div>
+
+    <div class="topbar-actions">
+      <button id="skinToggle" class="icon-btn" type="button" title="Switch colour scheme" aria-label="Switch colour scheme">
+        <span class="swatch" aria-hidden="true"></span><span class="icon-btn-label">Theme</span>
+      </button>
+      <button id="modeToggle" class="icon-btn" type="button" title="Light / dark" aria-label="Toggle light or dark mode">
+        <span class="mode-icon" aria-hidden="true"></span><span class="icon-btn-label">Mode</span>
+      </button>
+    </div>
+  </div>
+
+  <nav class="tabs" role="tablist" aria-label="Views">
+    <button class="tab is-active" data-view="schedule" role="tab" aria-selected="true">Schedule</button>
+    <button class="tab" data-view="players" role="tab" aria-selected="false">Players</button>
+    <button class="tab" data-view="bracket" role="tab" aria-selected="false">Bracket</button>
+    <span class="tabs-hint" title="Keyboard shortcuts">&larr; &rarr; views &middot; Shift discipline &middot; &uarr; &darr; player</span>
+  </nav>
+
+  <div class="catbar" role="tablist" aria-label="Discipline">
+    <button class="cat is-active" data-cat="ms" role="tab" aria-selected="true">MS</button>
+    <button class="cat" data-cat="ws" role="tab" aria-selected="false">WS</button>
+    <button class="cat" data-cat="md" role="tab" aria-selected="false">MD</button>
+    <button class="cat" data-cat="wd" role="tab" aria-selected="false">WD</button>
+    <button class="cat" data-cat="xd" role="tab" aria-selected="false">XD</button>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ============ SCHEDULE VIEW ============ -->
+  <section id="view-schedule" class="view is-active">
+    <div class="toolbar">
+      <div class="daybar" id="daybar"></div>
+      <div class="toolbar-right">
+        <label class="switch">
+          <input type="checkbox" id="onlyMine" checked>
+          <span>Only my players</span>
+        </label>
+        <button class="btn btn-primary" id="openPickerBtn" type="button">Add players</button>
+      </div>
+    </div>
+
+    <div id="scheduleStatus" class="status" hidden></div>
+    <div id="scheduleList" class="schedule"></div>
+  </section>
+
+  <!-- ============ PLAYERS VIEW ============ -->
+  <section id="view-players" class="view">
+    <div class="split">
+      <aside class="split-list">
+        <div class="split-list-head">
+          <h2>My players</h2>
+          <button class="btn btn-ghost btn-sm" id="openPickerBtn2" type="button">Add</button>
+        </div>
+        <div id="myPlayers" class="mylist"></div>
+      </aside>
+      <div class="split-detail" id="playerDetail"></div>
+    </div>
+  </section>
+
+  <!-- ============ BRACKET VIEW ============ -->
+  <section id="view-bracket" class="view">
+    <div class="toolbar">
+      <div class="zoombar">
+        <button class="btn btn-ghost btn-sm" id="zoomOut" type="button" aria-label="Zoom out">&minus;</button>
+        <span id="zoomLevel" class="muted">100%</span>
+        <button class="btn btn-ghost btn-sm" id="zoomIn" type="button" aria-label="Zoom in">+</button>
+        <button class="btn btn-ghost btn-sm" id="zoomFit" type="button" title="Fit the whole draw (F)">Fit</button>
+        <button class="btn btn-ghost btn-sm" id="zoomMine" type="button">Jump to my player</button>
+      </div>
+      <span class="muted bracket-hint">Drag to pan &middot; scroll or <kbd>+</kbd>&thinsp;/&thinsp;<kbd>&minus;</kbd> to zoom &middot; <kbd>F</kbd> to fit &middot; click a match for the head-to-head</span>
+    </div>
+    <div class="bracket-viewport" id="bracketViewport">
+      <div class="bracket-canvas" id="bracketCanvas"></div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <p>
+    Unofficial fan tool. Not affiliated with, endorsed by, or connected to the Badminton World Federation.
+    All match, draw and ranking data &copy; <a href="https://bwfbadminton.com" rel="noopener" target="_blank">BWF</a>.
+  </p>
+</footer>
+
+<!-- ============ PLAYER PICKER ============ -->
+<div class="modal" id="picker" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="pickerTitle">
+    <div class="modal-head">
+      <h2 id="pickerTitle">Select players &mdash; <span id="pickerCat">MS</span></h2>
+      <button class="icon-btn" id="closePicker" type="button" aria-label="Close">&times;</button>
+    </div>
+    <input type="search" id="pickerSearch" class="search" placeholder="Search name or country&hellip;" autocomplete="off">
+    <div id="pickerList" class="picker-list"></div>
+    <div class="modal-foot">
+      <span id="pickerCount" class="muted"></span>
+      <button class="btn btn-primary" id="donePicker" type="button">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ HEAD-TO-HEAD ============ -->
+<div class="modal" id="h2h" hidden>
+  <div class="modal-card modal-card-wide" role="dialog" aria-modal="true" aria-labelledby="h2hTitle">
+    <div class="modal-head">
+      <h2 id="h2hTitle">Head to head</h2>
+      <button class="icon-btn" id="closeH2h" type="button" aria-label="Close">&times;</button>
+    </div>
+    <div id="h2hBody" class="h2h-body"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
