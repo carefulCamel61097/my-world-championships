@@ -720,15 +720,45 @@ function renderMyPlayers() {
 
   for (const rec of players) {
     const p = rec.player;
+    const name = p ? p.nameDisplay : 'Player ' + rec.id;
     const row = el('div', 'mp' + (rec.id === state.active ? ' is-active' : ''));
     row.innerHTML = `
       ${flagImg(p && p.countryFlagUrl, p && p.countryCode)}
-      <span class="mp-nm">${esc(p ? p.nameDisplay : 'Player ' + rec.id)}
+      <span class="mp-nm">${esc(name)}
         <small>${esc(p ? (p.countryName || p.countryCode || '') : 'loading…')}</small></span>
-      <span class="mp-cat">${rec.cats.map(c => c.toUpperCase()).join(' ')}</span>`;
+      <span class="mp-cat">${rec.cats.map(c => c.toUpperCase()).join(' ')}</span>
+      <button class="mp-x" type="button" title="Stop following ${esc(name)}"
+        aria-label="Stop following ${esc(name)}">&times;</button>`;
+
     row.onclick = () => { state.active = rec.id; renderMyPlayers(); renderPlayerDetail(); };
+    row.querySelector('.mp-x').onclick = e => {
+      e.stopPropagation();                       // don't also select the row
+      unfollow(rec.id);
+    };
     list.appendChild(row);
   }
+}
+
+/**
+ * Drop a player from the follow list. Doubles pairs are followed as a unit, so
+ * removing one half removes the partner too — otherwise their matches would
+ * still show up and the row would be impossible to get rid of.
+ */
+function unfollow(playerId) {
+  const ids = new Set([String(playerId)]);
+  for (const cat of CATS) {
+    const draw = state.draws[cat];
+    if (!draw) continue;
+    for (const entry of draw.entries.values()) {
+      if (!entry.players.some(p => String(p.id) === String(playerId))) continue;
+      for (const p of entry.players) ids.add(String(p.id));
+    }
+  }
+  for (const id of ids) state.selected.delete(id);
+
+  if (ids.has(String(state.active))) state.active = null;
+  persistSelection();
+  renderAll();
 }
 
 async function renderPlayerDetail() {
@@ -861,7 +891,11 @@ function renderPath(draw, entry, panel) {
 
   const out = state.selected.size && isEliminated(draw, entry.key);
 
+  let first = true;
   for (const r of rounds) {
+    if (!first) body.appendChild(el('div', 'round-sep', '<i>&#9660;</i>'));
+    first = false;
+
     const block = el('div', 'round-block');
     const head = el('div', 'round-block-head');
 
@@ -1343,9 +1377,24 @@ function initBracketInteraction() {
   vp.addEventListener('selectstart', e => e.preventDefault());
   vp.addEventListener('dragstart', e => e.preventDefault());
 
+  // The wheel scrolls the bracket rather than zooming it: two-finger up/down
+  // and left/right pan, which is what a big map wants. Zooming stays on the
+  // buttons and +/-, plus ctrl+wheel — which is also what a trackpad pinch
+  // sends, so pinch-to-zoom keeps working.
   vp.addEventListener('wheel', e => {
     e.preventDefault();
-    setZoom(state.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12), e.clientX, e.clientY);
+    if (e.ctrlKey || e.metaKey) {
+      setZoom(state.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12), e.clientX, e.clientY);
+      return;
+    }
+    // deltaMode 1 = lines, 2 = pages; normalise both to something pixel-ish.
+    const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
+    let dx = e.deltaX * k, dy = e.deltaY * k;
+    // A plain mouse has no horizontal axis; shift+wheel is the usual stand-in.
+    if (e.shiftKey && !dx) { dx = dy; dy = 0; }
+    state.pan.x -= dx;
+    state.pan.y -= dy;
+    applyTransform();
   }, { passive: false });
 
   $('#zoomIn').onclick = () => setZoom(state.zoom * 1.2);
@@ -1674,6 +1723,10 @@ function initHotkeys() {
       if (zoomIn)  { e.preventDefault(); setZoom(state.zoom * 1.2); return; }
       if (zoomOut) { e.preventDefault(); setZoom(state.zoom / 1.2); return; }
       if (e.key === 'f' || e.key === 'F') { e.preventDefault(); fitBracket(); return; }
+      // 0 resets to 100%, the same convention browsers use for ctrl+0.
+      if (e.key === '0' || e.code === 'Numpad0' || e.code === 'Digit0') {
+        e.preventDefault(); setZoom(1); return;
+      }
     }
 
     switch (e.key) {

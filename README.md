@@ -60,7 +60,12 @@ explicit choice the page follows `prefers-color-scheme`, falling back to dark.
 3. **Bracket** — the whole 63-match draw as one pannable, zoomable map, in the same shape
    as the SportsPort tournament map: feeders on the left, Final on the right, elbow
    connectors between. Followed players are outlined. *Fit* frames the entire draw;
-   *Jump to my player* zooms to a readable level and centres on them.
+   *Jump to my player* zooms to a readable level and centres on them. Scrolling moves
+   the view (both axes); zooming is on the buttons, `+`/`−` and ctrl+wheel.
+
+Each followed player has an **×** to stop following them. Removing one half of a doubles
+pair removes the partner too — otherwise their matches would keep appearing and the row
+could never be cleared.
 
 **Head-to-head** opens from anywhere a real pairing is shown: any match card in the
 Schedule or Players view, any opponent chip, or any node in the Bracket. It shows the
@@ -112,12 +117,20 @@ Selections live in `localStorage` and in the URL hash
 | `Shift` | Next discipline (MS → WS → MD → WD → XD, wrapping) |
 | `↑` `↓` | Previous / next followed player (Players view only) |
 | `+` `−` | Zoom the bracket in / out (Bracket view only; main row **and** numpad) |
+| `0` | Reset the bracket to 100% (main row and numpad) |
 | `F` | Fit the whole draw to the viewport (Bracket view only) |
 | `Esc` | Close the head-to-head or the player picker |
 
 Keys are ignored while typing in the search box and while a dialog is open. Zoom is
-matched on `e.code` as well as `e.key`, so `NumpadAdd` / `NumpadSubtract` and the
-unshifted `=` / `-` keys all work regardless of keyboard layout.
+matched on `e.code` as well as `e.key`, so `NumpadAdd` / `NumpadSubtract` / `Numpad0` and
+the unshifted `=` / `-` / `0` keys all work regardless of keyboard layout.
+
+**Mouse in the Bracket view:** the wheel and two-finger trackpad gestures **scroll** the
+draw on both axes rather than zooming — a bracket this size is a map, and having to
+click-drag everywhere was the annoyance. `shift`+wheel scrolls horizontally for mice with
+no second axis. Zooming stays on the buttons, `+`/`−`, and **ctrl+wheel** — which is also
+what a trackpad pinch emits, so pinch-to-zoom still works. Wheel deltas are normalised
+across `deltaMode` 0/1/2, so line- and page-based mice scroll a sane distance.
 
 ---
 

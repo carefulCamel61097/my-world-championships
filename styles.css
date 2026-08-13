@@ -151,6 +151,43 @@
 
 /* ========================== base ========================== */
 * { box-sizing: border-box; }
+
+/* Themed scrollbars. The default OS bar sits badly on the dark skins and
+   ignores the accent entirely, so every scrolling surface gets the same
+   treatment in both engines. */
+.mylist, .picker-list, .h2h-body, .season, .split-detail,
+.daybar, .catbar, .bracket-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.mylist::-webkit-scrollbar, .picker-list::-webkit-scrollbar,
+.h2h-body::-webkit-scrollbar, .season::-webkit-scrollbar,
+.split-detail::-webkit-scrollbar, .bracket-viewport::-webkit-scrollbar {
+  width: 9px; height: 9px;
+}
+.mylist::-webkit-scrollbar-track, .picker-list::-webkit-scrollbar-track,
+.h2h-body::-webkit-scrollbar-track, .season::-webkit-scrollbar-track,
+.split-detail::-webkit-scrollbar-track, .bracket-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+.mylist::-webkit-scrollbar-thumb, .picker-list::-webkit-scrollbar-thumb,
+.h2h-body::-webkit-scrollbar-thumb, .season::-webkit-scrollbar-thumb,
+.split-detail::-webkit-scrollbar-thumb, .bracket-viewport::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.mylist::-webkit-scrollbar-thumb:hover, .picker-list::-webkit-scrollbar-thumb:hover,
+.h2h-body::-webkit-scrollbar-thumb:hover, .season::-webkit-scrollbar-thumb:hover,
+.split-detail::-webkit-scrollbar-thumb:hover, .bracket-viewport::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+  background-clip: content-box;
+}
+.mylist::-webkit-scrollbar-corner, .picker-list::-webkit-scrollbar-corner,
+.h2h-body::-webkit-scrollbar-corner, .bracket-viewport::-webkit-scrollbar-corner {
+  background: transparent;
+}
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
@@ -377,10 +414,20 @@ a { color: var(--accent-text); }
 .mylist { max-height: 62vh; overflow-y: auto; }
 
 .mp {
-  display: grid; grid-template-columns: 30px 1fr auto; align-items: center; gap: 10px;
-  padding: 10px 14px; cursor: pointer; border-left: 3px solid transparent;
+  display: grid; grid-template-columns: 30px 1fr auto auto; align-items: center; gap: 10px;
+  padding: 10px 8px 10px 14px; cursor: pointer; border-left: 3px solid transparent;
   border-bottom: 1px solid var(--border-soft);
 }
+.mp-x {
+  appearance: none; background: transparent; border: 0;
+  color: var(--text-muted); font: inherit; font-size: 17px; line-height: 1;
+  padding: 2px 7px; border-radius: var(--radius-btn); cursor: pointer;
+  opacity: 0; transition: opacity .12s;
+}
+.mp:hover .mp-x, .mp.is-active .mp-x, .mp-x:focus-visible { opacity: 1; }
+.mp-x:hover { background: var(--accent); color: var(--accent-fg); }
+/* Touch devices have no hover, so never hide the control there. */
+@media (hover: none) { .mp-x { opacity: 1; } }
 .mp:hover { background: var(--surface-2); }
 .mp.is-active { background: var(--surface-2); border-left-color: var(--accent); }
 .mp .flag { width: 26px; height: 26px; }
@@ -430,6 +477,20 @@ a { color: var(--accent-text); }
   background: var(--surface-sunk);
 }
 .round-block:first-child { margin-top: 12px; }
+
+/* Divider between rounds — reads as "and if they win, then…", which is what
+   the sequence of round bands actually means. */
+.round-sep {
+  display: flex; align-items: center; gap: 10px;
+  margin: 0 22px 12px; color: var(--border);
+}
+.round-sep::before, .round-sep::after {
+  content: ''; flex: 1; height: 1px; background: var(--border-soft);
+}
+.round-sep i {
+  font-style: normal; font-size: 12px; line-height: 1;
+  color: var(--text-muted); transform: translateY(-1px);
+}
 .round-block-head {
   display: flex; align-items: center; gap: 10px;
   padding: 9px 14px;
@@ -536,8 +597,6 @@ a { color: var(--accent-text); }
    unreachable once the strip is wider than the panel. */
 .season-wrap.align-right .season-title { flex-direction: row-reverse; }
 .season-wrap.align-right .season > :first-child { margin-left: auto; }
-.season::-webkit-scrollbar { height: 5px; }
-.season::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
 .sq { flex: none; width: 52px; text-align: center; text-decoration: none; color: inherit; }
 /* Two lines, clamped from the START — clipping the tail of a name is
