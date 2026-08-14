@@ -44,8 +44,13 @@ gh api -X POST repos/<owner>/my-world-championships/pages \
 
 Default skin mirrors the BWF site (red `#df2027`, Roboto, dense cards). The **Theme**
 button swaps to the SportsPort palette (orange `#FF8000`, Inter, rounded cards); the
-**Mode** button forces light/dark. Both choices persist in `localStorage`. With no
-explicit choice the page follows `prefers-color-scheme`, falling back to dark.
+**Mode** button flips light/dark. Both choices persist in `localStorage`.
+
+**The default is BWF red on dark**, whatever the system is set to — the tool reads as a
+scoreboard, and a scoreboard is dark. `index.html` ships `data-mode="dark"` on the root
+element as well as setting it in JS, so a light-mode machine gets no flash of white on
+first paint. The `prefers-color-scheme` rules are still in the stylesheet and still
+correct; they simply no longer decide the default.
 
 ### Views
 
@@ -71,10 +76,52 @@ choice persists and travels in the URL (`c=all`, or `c=ms,wd`).
    the view (both axes); zooming is on the buttons, `+`/`−` and ctrl+wheel.
    A bracket is one draw by definition, so this view keeps **its own MS/WS/MD/WD/XD
    selector** in its toolbar, independent of the filter chips above.
+4. **Predictions** — the same tree, but you fill it in. See below.
 
 Each followed player has an **×** to stop following them. Removing one half of a doubles
 pair removes the partner too — otherwise their matches would keep appearing and the row
 could never be cleared.
+
+### Predictions
+
+Every card carries a dimmed **W** beside both names. Click one and that entry is your
+pick: it lights up, the other side dims, and the winner is carried into the next card,
+and the one after that, all the way to a **Champion** cell past the Final. Clicking the
+same side again un-picks it. Picks are stored per discipline in `localStorage`, so a
+half-filled sheet is still there tomorrow — and the view reopens on the draw you were
+last working on rather than resetting to MS.
+
+Three sources, switched by the buttons under the toolbar:
+
+| Button | What it shows |
+|---|---|
+| **Your predictions** | Your own clicks. Editable; this is the only mode you can change. |
+| **By world ranking** | Auto: the better BWF World Ranking wins every match (`rankId=2`). |
+| **By race ranking** | Auto: the better HSBC Race to Finals standing wins every match (`rankId=9`). |
+
+The two auto brackets answer "what does the form book say?" and are read-only — but
+**Use as mine** copies one into your own sheet as a starting point, so you can take the
+seeding-by-ranking bracket and change only the matches you disagree with. They also
+disagree with each other in a useful way: world ranking is a rolling 52-week average
+while the Race is calendar-year form, so the two often name different champions.
+
+Entries outside the pages walked from the ranking table fall back to the tournament
+seeding, and a genuine dead heat keeps the top side — arbitrary, but stable, so the
+bracket never flickers between renders.
+
+**Scoring.** Once BWF publishes results, each card is marked against reality: the left
+rail turns green if your pick actually won that match and red if it did not, and the
+readout adds `12/16 right so far`. Real results are deliberately **not** merged into the
+tree — the cards keep showing who *you* said would be there. If your predicted finalist
+went out in the last 16, your final pick is simply wrong, which is how a prediction
+bracket is supposed to work.
+
+**Save PNG** exports the sheet as an image, stamped with the date the predictions were
+made (not the date of the export). It is drawn onto a canvas by hand rather than by
+rasterising the DOM, which would need a library — this repo has no build step and loads
+nothing from a CDN. Flags are fetched with `crossOrigin="anonymous"`; if BWF's image host
+ever stops sending the CORS header the flag is skipped rather than tainting the canvas
+and making the export impossible.
 
 ### Selections
 
@@ -147,19 +194,22 @@ Selections live in `localStorage` and in the URL hash
 
 | Key | Action |
 |---|---|
-| `←` `→` | Previous / next view (Schedule → Players → Bracket, wrapping) |
-| `Shift` | Next discipline. In the Bracket view it changes the drawn bracket; elsewhere it shows one discipline at a time, cycling MS → WS → MD → WD → XD → all |
+| `←` `→` | Previous / next view (Schedule → Players → Bracket → Predictions, wrapping) |
+| `Shift` | Next discipline. In the Bracket and Predictions views it changes that view's own draw; elsewhere it shows one discipline at a time, cycling MS → WS → MD → WD → XD → all |
 | `↑` `↓` | Previous / next followed player (Players view only) |
-| `+` `−` | Zoom the bracket in / out (Bracket view only; main row **and** numpad) |
-| `0` | Reset the bracket to 100% (main row and numpad) |
-| `F` | Fit the whole draw to the viewport (Bracket view only) |
+| `+` `−` | Zoom in / out (Bracket and Predictions views; main row **and** numpad) |
+| `0` | Reset to 100% (main row and numpad) |
+| `F` | Fit the whole draw to the viewport |
 | `Esc` | Close the head-to-head or the player picker |
 
 Keys are ignored while typing in the search box and while a dialog is open. Zoom is
 matched on `e.code` as well as `e.key`, so `NumpadAdd` / `NumpadSubtract` / `Numpad0` and
 the unshifted `=` / `-` / `0` keys all work regardless of keyboard layout.
 
-**Mouse in the Bracket view:** the wheel and two-finger trackpad gestures **scroll** the
+The Bracket and Predictions views are two independent maps: each keeps **its own zoom,
+pan and draw**, so framing one does not move the other.
+
+**Mouse in the Bracket and Predictions views:** the wheel and two-finger trackpad gestures **scroll** the
 draw on both axes rather than zooming — a bracket this size is a map, and having to
 click-drag everywhere was the annoyance. `shift`+wheel scrolls horizontally for mice with
 no second axis. Zooming stays on the buttons, `+`/`−`, and **ctrl+wheel** — which is also
@@ -210,6 +260,7 @@ Public tournament page:
 - "Match of the day" / clash highlighting between two followed players.
 - Upset tracking vs seeding.
 - Calendar (`.ics`) export of a followed player's matches.
+- ✅ *Done:* a prediction bracket, scored against the real results, exportable as a PNG.
 
 ---
 
@@ -507,7 +558,7 @@ for what that costs (very little). Everything the tool ships comes from BWF.
 | Potential opponents | derived from BWF draw grid | ✅ |
 | Head-to-head | BWF `h2h/statistics` | ✅ |
 | BWF World Ranking | BWF `vue-rankingtable` / h2h | ✅ |
-| Road-to-Finals ranking | BWF `rankId=9` | ✅ |
+| Road-to-Finals ranking | BWF `rankId=9` | ✅ (drives the Predictions "by race ranking" bracket) |
 | Career W/L + recent form | BWF `h2h/statistics` | ✅ |
 | Player photos, flags, country | BWF (`img.bwfbadminton.com`) | ✅ |
 | **Elo rating & Elo ranking** | — | ⛔ **out of scope** (badmintonranks not used) |
@@ -529,7 +580,8 @@ GitHub Pages (static)
  └── index.html + styles.css + app.js
       ├── fetch() → extranet-lv.bwfbadminton.com   (draws, schedule, rankings, h2h)
       ├── localStorage                              (followed players, saved
-      │                                              selections, ranks, skin, mode)
+      │                                              selections, predictions, ranks,
+      │                                              skin, mode)
       ├── sessionStorage                            (5-minute response cache)
       └── two-lane request queue, ~320 ms apart     (be polite to BWF)
 ```
@@ -571,9 +623,11 @@ browser, which is a much bigger commitment.
 9. ✅ Full bracket map view with pan/zoom.
 10. ✅ Keyboard navigation, including bracket zoom.
 11. ✅ Season results strip, in the Players view and both sides of every head-to-head.
-12. ⬜ Recent form strip (`vue-player-match-previous` is already fetched, not yet shown).
-13. ⬜ Calendar (`.ics`) export.
-14. ⬜ Elo — not planned; badmintonranks is off the table by choice.
+12. ✅ Predictions view: pick every match, winners carry up the draw, scored against real
+    results, with ranking-derived brackets and PNG export.
+13. ⬜ Recent form strip (`vue-player-match-previous` is already fetched, not yet shown).
+14. ⬜ Calendar (`.ics`) export.
+15. ⬜ Elo — not planned; badmintonranks is off the table by choice.
 
 ### Verified against live data
 
@@ -591,6 +645,16 @@ browser, which is a much bigger commitment.
   `F · R32 · W · SF · R16 · R16 · QF · QF` with the right levels, colours and fills
   (100 / 80 / 60 / 40 / 20 / 13 %), with the World Championships and Thomas & Uber Cup
   correctly dropped.
+- Predictions driven end-to-end in a real Chrome: a pick marks its side and dims the
+  other, the winner appears in the next card, clicking the same side again un-picks it,
+  and 63 picks name a champion. The world-ranking walk resolved 210 MS entries and the
+  race walk 273 — two genuinely different tables, which named two different champions
+  (SHI Yu Qi vs CHOU Tien Chen). *Use as mine* copied all 63 and kept the champion.
+  The PNG came out 3424 × 4472 at 2×, ~1 MB, with flags intact — so BWF's image host does
+  send `Access-Control-Allow-Origin`. Picks and the chosen draw both survive a reload,
+  and a link naming a discipline still overrides the remembered one.
+- Dark BWF red is the default with `prefers-color-scheme: light` emulated, and the Mode
+  button still flips both ways from there.
 - Bracket interaction driven with synthetic mouse events: a click opens the head-to-head,
   a drag pans without selecting text or opening the popup, a double-click selects
   nothing, and `F` reproduces the Fit button exactly.

@@ -1,5 +1,7 @@
 <!DOCTYPE html>
-<html lang="en" data-skin="bwf">
+<!-- Defaults are set here as well as in JS so the first paint is already the
+     BWF-red dark scheme, with no flash of light on a light-mode system. -->
+<html lang="en" data-skin="bwf" data-mode="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -54,6 +56,7 @@
     <button class="tab is-active" data-view="schedule" role="tab" aria-selected="true">Schedule</button>
     <button class="tab" data-view="players" role="tab" aria-selected="false">Players</button>
     <button class="tab" data-view="bracket" role="tab" aria-selected="false">Bracket</button>
+    <button class="tab" data-view="predict" role="tab" aria-selected="false">Predictions</button>
     <span class="tabs-hint" title="Keyboard shortcuts">&larr; &rarr; views &middot; Shift discipline &middot; &uarr; &darr; player</span>
   </nav>
 
@@ -122,6 +125,44 @@
     </div>
     <div class="bracket-viewport" id="bracketViewport">
       <div class="bracket-canvas" id="bracketCanvas"></div>
+    </div>
+  </section>
+
+  <!-- ============ PREDICTIONS VIEW ============ -->
+  <section id="view-predict" class="view">
+    <div class="toolbar">
+      <div class="bracket-cats" role="group" aria-label="Draw to predict">
+        <button class="pcat is-active" data-pcat="ms" type="button">MS</button>
+        <button class="pcat" data-pcat="ws" type="button">WS</button>
+        <button class="pcat" data-pcat="md" type="button">MD</button>
+        <button class="pcat" data-pcat="wd" type="button">WD</button>
+        <button class="pcat" data-pcat="xd" type="button">XD</button>
+      </div>
+      <div class="zoombar">
+        <button class="btn btn-ghost btn-sm" id="pZoomOut" type="button" aria-label="Zoom out">&minus;</button>
+        <span id="pZoomLevel" class="muted">100%</span>
+        <button class="btn btn-ghost btn-sm" id="pZoomIn" type="button" aria-label="Zoom in">+</button>
+        <button class="btn btn-ghost btn-sm" id="pZoomFit" type="button" title="Fit the whole draw (F)">Fit</button>
+        <button class="btn btn-ghost btn-sm" id="pZoomMine" type="button">Jump to my player</button>
+      </div>
+      <div class="toolbar-right">
+        <span class="predict-score" id="predictScore"></span>
+        <button class="btn btn-ghost btn-sm" id="predictCopy" type="button" hidden
+                title="Start your own sheet from this bracket">Use as mine</button>
+        <button class="btn btn-ghost btn-sm" id="predictClear" type="button">Clear picks</button>
+        <button class="btn btn-primary btn-sm" id="predictPng" type="button"
+                title="Save this bracket as an image">Save PNG</button>
+      </div>
+    </div>
+
+    <div class="pmodes" role="group" aria-label="Where the picks come from">
+      <button class="pmode is-active" data-pmode="yours" type="button">Your predictions</button>
+      <button class="pmode" data-pmode="world" type="button">By world ranking</button>
+      <button class="pmode" data-pmode="race" type="button">By race ranking</button>
+      <span class="muted bracket-hint">Click the <b>W</b> beside whoever you think wins &mdash; they carry up the draw</span>
+    </div>
+    <div class="bracket-viewport" id="predictViewport">
+      <div class="bracket-canvas" id="predictCanvas"></div>
     </div>
   </section>
 

@@ -23,9 +23,16 @@ const TMT = {
 const DRAW_ID = { ms: 1, ws: 2, md: 3, wd: 4, xd: 5 };
 /** ranking category id per discipline, for rankId=2 (BWF World Rankings). */
 const RANK_CAT = { ms: 6, ws: 7, md: 8, wd: 9, xd: 10 };
+/** …and for rankId=9, the HSBC Race to Finals (road-to-finals) standings. */
+const RACE_CAT = { ms: 57, ws: 58, md: 59, wd: 60, xd: 61 };
+/** The two ranking tables, addressed by a short board name. */
+const BOARDS = {
+  world: { rankId: 2, cats: RANK_CAT, label: 'BWF World Ranking' },
+  race:  { rankId: 9, cats: RACE_CAT, label: 'Race to Finals' },
+};
 const IS_DOUBLES = { ms: false, ws: false, md: true, wd: true, xd: true };
 const CATS = ['ms','ws','md','wd','xd'];
-const VIEWS = ['schedule','players','bracket'];
+const VIEWS = ['schedule','players','bracket','predict'];
 const CAT_LABEL = { ms:'Men’s Singles', ws:'Women’s Singles', md:'Men’s Doubles', wd:'Women’s Doubles', xd:'Mixed Doubles' };
 const ROUND_ORDER = ['R64','R32','R16','QF','SF','Final'];
 const ROUND_LABEL = { R64:'Round of 64', R32:'Round of 32', R16:'Round of 16', QF:'Quarter-final', SF:'Semi-final', Final:'Final' };
@@ -150,6 +157,15 @@ const state = {
   // The Bracket view is inherently one draw at a time, so it keeps its own
   // choice rather than trying to render five brackets at once.
   bracketCat: 'ms',
+  // Predictions are their own draw choice: you might be reading the MS bracket
+  // while filling in your WD picks.
+  predictCat: 'ms',
+  // 'yours' | 'world' | 'race' — your own sheet, or one derived from a ranking.
+  predictMode: 'yours',
+  // cat -> { matchCode: entryKey } — who you think wins each match.
+  predict: {},
+  // cat -> ISO date the sheet was last touched, stamped onto the PNG export.
+  predictAt: {},
   day: 'all',
   onlyMine: true,
   selected: new Set(store.read('players', [])),
@@ -161,8 +177,6 @@ const state = {
   ranks: {},             // cat -> { entryKey: bwfRank }
   presets: [],           // saved named selections
   activePreset: null,    // which one the working set came from, if any
-  zoom: 1,
-  pan: { x: 0, y: 0 },
 };
 
 function persistSelection() {
@@ -205,7 +219,9 @@ function readHash() {
     const want = c.split(',').map(s => s.trim()).filter(s => CATS.includes(s));
     if (want.length) {
       state.cats = new Set(want);
-      state.bracketCat = want[0];
+      // A link that names disciplines outranks whatever draw you were last on.
+      state.bracketCat = state.predictCat = want[0];
+      state.catsFromLink = true;
     }
   }
 
@@ -493,17 +509,20 @@ function seedText(seed) {
 const RANK_TTL_MS = 12 * 60 * 60 * 1000;
 const RANK_MAX_PAGES = 20;               // 300 players — beyond any WC field
 
-function rankCacheGet(cat) {
+/** Cache slot for one table: 'world:ms', 'race:xd', … */
+const rankSlot = (board, cat) => board + ':' + cat;
+
+function rankCacheGet(slot) {
   try {
-    const raw = localStorage.getItem('wc26.ranks.' + cat);
+    const raw = localStorage.getItem('wc26.ranks.' + slot);
     if (!raw) return null;
     const { t, v } = JSON.parse(raw);
     return Date.now() - t > RANK_TTL_MS ? null : v;
   } catch { return null; }
 }
 
-function rankCacheSet(cat, v) {
-  try { localStorage.setItem('wc26.ranks.' + cat, JSON.stringify({ t: Date.now(), v })); } catch {}
+function rankCacheSet(slot, v) {
+  try { localStorage.setItem('wc26.ranks.' + slot, JSON.stringify({ t: Date.now(), v })); } catch {}
 }
 
 /** Ranking-table row → the same key shape as entryKey(). */
@@ -512,22 +531,25 @@ function rowKey(r) {
   return ids.sort().join('_');
 }
 
-async function loadRankIndex(cat) {
-  if (state.ranks[cat]) return state.ranks[cat];
+async function loadRankIndex(cat, board) {
+  board = board || 'world';
+  const slot = rankSlot(board, cat);
+  if (state.ranks[slot]) return state.ranks[slot];
 
-  const cached = rankCacheGet(cat);
-  if (cached) { state.ranks[cat] = cached; return cached; }
+  const cached = rankCacheGet(slot);
+  if (cached) { state.ranks[slot] = cached; return cached; }
 
   const draw = state.draws[cat];
   const need = new Set(draw ? Array.from(draw.entries.keys()) : []);
   const idx = {};
-  state.ranks[cat] = idx;                 // publish early; fills in progressively
+  state.ranks[slot] = idx;                // publish early; fills in progressively
 
   for (let page = 1; page <= RANK_MAX_PAGES && need.size; page++) {
     let d;
     try {
       d = await getJSON('vue-rankingtable', {
-        rankId: 2, catId: RANK_CAT[cat], page, doubles: IS_DOUBLES[cat],
+        rankId: BOARDS[board].rankId, catId: BOARDS[board].cats[cat],
+        page, doubles: IS_DOUBLES[cat],
       }, 'low');                                  // never ahead of the visible view
     } catch { break; }
 
@@ -541,15 +563,16 @@ async function loadRankIndex(cat) {
       if (idx[k] == null) idx[k] = r.rank;
       need.delete(k);
     }
-    if (state.view === 'players' || state.view === 'bracket') renderAll();
+    if (state.view !== 'schedule') renderAll();
   }
 
-  rankCacheSet(cat, idx);
+  idx.__done = true;                      // distinguishes "no rank" from "not loaded yet"
+  rankCacheSet(slot, idx);
   return idx;
 }
 
-function rankOf(cat, key) {
-  const idx = state.ranks[cat];
+function rankOf(cat, key, board) {
+  const idx = state.ranks[rankSlot(board || 'world', cat)];
   const r = idx && idx[key];
   return typeof r === 'number' ? r : Infinity;
 }
@@ -877,8 +900,8 @@ async function renderPlayerDetail() {
     renderPath(state.draws[cat], entry, $('#pathPanel'));
     // Ordering the opponent chips by ranking needs this discipline's index.
     // Fetch it only now, and only for the discipline actually on screen.
-    if (!state.ranks[cat]) {
-      loadRankIndex(cat)
+    if (!state.ranks[rankSlot('world', cat)]) {
+      loadRankIndex(cat, 'world')
         .then(() => { if (state.active === rec.id && state.view === 'players') renderPlayerDetail(); })
         .catch(() => { /* chips just stay in bracket order */ });
     }
@@ -1367,89 +1390,114 @@ function renderBracket() {
   }
 
   canvas.appendChild(frag);
-  applyTransform();
+  applyTransform(MAPS.bracket);
+}
+
+/* ---- cameras ----
+
+   Two views are pannable maps (Bracket and Predictions), and they must not
+   share a camera: zooming the bracket should not move your prediction sheet.
+   Each keeps its own zoom/pan against its own viewport and canvas.
+*/
+
+const MAPS = {
+  bracket: { vp: '#bracketViewport', canvas: '#bracketCanvas', readout: '#zoomLevel',
+             node: '.bnode', zoom: 1, pan: { x: 0, y: 0 } },
+  predict: { vp: '#predictViewport', canvas: '#predictCanvas', readout: '#pZoomLevel',
+             node: '.pnode', zoom: 1, pan: { x: 0, y: 0 } },
+};
+
+/** The camera for a view name, defaulting to whichever view is showing. */
+function mapFor(view) {
+  return MAPS[(view || state.view) === 'predict' ? 'predict' : 'bracket'];
 }
 
 /**
- * Keep the bracket inside the viewport: centre it on whichever axis it is
+ * Keep the canvas inside its viewport: centre it on whichever axis it is
  * smaller than the viewport, and otherwise stop it being dragged (or jumped)
  * off into empty space.
  */
-function clampPan() {
-  const vp = $('#bracketViewport').getBoundingClientRect();
+function clampPan(cam) {
+  const vp = $(cam.vp).getBoundingClientRect();
   if (!vp.width || !vp.height) return;             // section still hidden
-  const canvas = $('#bracketCanvas');
-  const w = (parseFloat(canvas.style.width) || 0) * state.zoom;
-  const h = (parseFloat(canvas.style.height) || 0) * state.zoom;
+  const canvas = $(cam.canvas);
+  const w = (parseFloat(canvas.style.width) || 0) * cam.zoom;
+  const h = (parseFloat(canvas.style.height) || 0) * cam.zoom;
   const m = 24;                                     // breathing room at the edges
 
-  state.pan.x = w <= vp.width
+  cam.pan.x = w <= vp.width
     ? (vp.width - w) / 2
-    : Math.min(m, Math.max(vp.width - w - m, state.pan.x));
-  state.pan.y = h <= vp.height
+    : Math.min(m, Math.max(vp.width - w - m, cam.pan.x));
+  cam.pan.y = h <= vp.height
     ? (vp.height - h) / 2
-    : Math.min(m, Math.max(vp.height - h - m, state.pan.y));
+    : Math.min(m, Math.max(vp.height - h - m, cam.pan.y));
 }
 
-function applyTransform() {
-  clampPan();
-  const c = $('#bracketCanvas');
-  c.style.transform = `translate(${state.pan.x}px, ${state.pan.y}px) scale(${state.zoom})`;
-  $('#zoomLevel').textContent = Math.round(state.zoom * 100) + '%';
+function applyTransform(cam) {
+  clampPan(cam);
+  const c = $(cam.canvas);
+  c.style.transform = `translate(${cam.pan.x}px, ${cam.pan.y}px) scale(${cam.zoom})`;
+  $(cam.readout).textContent = Math.round(cam.zoom * 100) + '%';
 }
 
-function setZoom(z, originX, originY) {
+function setZoom(cam, z, originX, originY) {
   const next = Math.min(2, Math.max(0.12, z));
-  const vp = $('#bracketViewport').getBoundingClientRect();
+  const vp = $(cam.vp).getBoundingClientRect();
   // keep the point under the cursor (or the viewport centre) fixed
   const px = originX == null ? vp.width / 2 : originX - vp.left;
   const py = originY == null ? vp.height / 2 : originY - vp.top;
-  const k = next / state.zoom;
-  state.pan.x = px - (px - state.pan.x) * k;
-  state.pan.y = py - (py - state.pan.y) * k;
-  state.zoom = next;
-  applyTransform();
+  const k = next / cam.zoom;
+  cam.pan.x = px - (px - cam.pan.x) * k;
+  cam.pan.y = py - (py - cam.pan.y) * k;
+  cam.zoom = next;
+  applyTransform(cam);
 }
 
-function fitBracket() {
-  const canvas = $('#bracketCanvas');
-  const vp = $('#bracketViewport').getBoundingClientRect();
+function fitBracket(cam) {
+  cam = cam || mapFor();
+  const canvas = $(cam.canvas);
+  const vp = $(cam.vp).getBoundingClientRect();
   const w = parseFloat(canvas.style.width) || 1;
   const h = parseFloat(canvas.style.height) || 1;
   if (!vp.width || !vp.height) return;
-  state.zoom = Math.min(2, Math.max(0.12, Math.min(vp.width / w, vp.height / h)));
-  state.pan.x = (vp.width - w * state.zoom) / 2;
-  state.pan.y = (vp.height - h * state.zoom) / 2;
-  applyTransform();
+  cam.zoom = Math.min(2, Math.max(0.12, Math.min(vp.width / w, vp.height / h)));
+  cam.pan.x = (vp.width - w * cam.zoom) / 2;
+  cam.pan.y = (vp.height - h * cam.zoom) / 2;
+  applyTransform(cam);
 }
 
 /** Centre the view on the first followed player in this draw. */
-function jumpToMine() {
-  const draw = state.draws[state.bracketCat];
-  if (!draw) return;
-  const node = $('#bracketCanvas .bnode.is-mine');
-  if (!node) { fitBracket(); return; }
-  const vp = $('#bracketViewport').getBoundingClientRect();
-  state.zoom = Math.min(1.1, Math.max(state.zoom, 0.75));
+function jumpToMine(cam) {
+  cam = cam || mapFor();
+  const node = $(cam.canvas + ' ' + cam.node + '.is-mine');
+  if (!node) { fitBracket(cam); return; }
+  const vp = $(cam.vp).getBoundingClientRect();
+  cam.zoom = Math.min(1.1, Math.max(cam.zoom, 0.75));
   const nx = parseFloat(node.style.left) + BR.CARD_W / 2;
   const ny = parseFloat(node.style.top) + BR.CARD_H / 2;
-  state.pan.x = vp.width / 2 - nx * state.zoom;
-  state.pan.y = vp.height / 2 - ny * state.zoom;
-  applyTransform();
+  cam.pan.x = vp.width / 2 - nx * cam.zoom;
+  cam.pan.y = vp.height / 2 - ny * cam.zoom;
+  applyTransform(cam);
+}
+
+/** Re-frame a map view once its section is actually visible and has a size. */
+function frameMap(view) {
+  const cam = mapFor(view);
+  requestAnimationFrame(() => (state.selected.size ? jumpToMine(cam) : fitBracket(cam)));
 }
 
 let canvasDidPan = false;
 
-function initBracketInteraction() {
-  const vp = $('#bracketViewport');
+function initBracketInteraction(cam) {
+  const vp = $(cam.vp);
   let dragging = false, sx = 0, sy = 0, px = 0, py = 0;
 
   const onMove = e => {
     if (!dragging) return;
     const dx = e.clientX - sx, dy = e.clientY - sy;
     if (Math.abs(dx) > 3 || Math.abs(dy) > 3) canvasDidPan = true;
-    state.pan.x = px + dx; state.pan.y = py + dy;
-    applyTransform();
+    cam.pan.x = px + dx; cam.pan.y = py + dy;
+    applyTransform(cam);
   };
 
   const onUp = () => {
@@ -1464,7 +1512,7 @@ function initBracketInteraction() {
   vp.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
     dragging = true; canvasDidPan = false;
-    sx = e.clientX; sy = e.clientY; px = state.pan.x; py = state.pan.y;
+    sx = e.clientX; sy = e.clientY; px = cam.pan.x; py = cam.pan.y;
     vp.classList.add('is-panning');
     // NB: deliberately no preventDefault here and no setPointerCapture.
     // preventDefault on pointerdown can suppress the follow-up click in some
@@ -1496,7 +1544,7 @@ function initBracketInteraction() {
   vp.addEventListener('wheel', e => {
     e.preventDefault();
     if (e.ctrlKey || e.metaKey) {
-      setZoom(state.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12), e.clientX, e.clientY);
+      setZoom(cam, cam.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12), e.clientX, e.clientY);
       return;
     }
     // deltaMode 1 = lines, 2 = pages; normalise both to something pixel-ish.
@@ -1504,15 +1552,618 @@ function initBracketInteraction() {
     let dx = e.deltaX * k, dy = e.deltaY * k;
     // A plain mouse has no horizontal axis; shift+wheel is the usual stand-in.
     if (e.shiftKey && !dx) { dx = dy; dy = 0; }
-    state.pan.x -= dx;
-    state.pan.y -= dy;
-    applyTransform();
+    cam.pan.x -= dx;
+    cam.pan.y -= dy;
+    applyTransform(cam);
   }, { passive: false });
+}
 
-  $('#zoomIn').onclick = () => setZoom(state.zoom * 1.2);
-  $('#zoomOut').onclick = () => setZoom(state.zoom / 1.2);
-  $('#zoomFit').onclick = fitBracket;
-  $('#zoomMine').onclick = jumpToMine;
+/** Wire one map view's zoom buttons. */
+function initZoomBar(cam, ids) {
+  $(ids.in).onclick   = () => setZoom(cam, cam.zoom * 1.2);
+  $(ids.out).onclick  = () => setZoom(cam, cam.zoom / 1.2);
+  $(ids.fit).onclick  = () => fitBracket(cam);
+  $(ids.mine).onclick = () => jumpToMine(cam);
+}
+
+/* ============================ predictions ============================
+
+   The same tree as the Bracket view, but filled in by *you* rather than by
+   BWF. Each side of a match carries a dimmed W; click one and that entry is
+   carried into the next card, and the one after that, all the way to the title.
+
+   Three sources, switched by the buttons in the toolbar:
+     yours  — your own clicks, kept in localStorage per discipline
+     world  — auto: the better BWF World Ranking wins every match
+     race   — auto: the better Race to Finals standing wins every match
+
+   The auto brackets are read-only. They exist to answer "what does the form
+   book say?" — and can be copied into your own sheet as a starting point.
+   ==================================================================== */
+
+const PRED_MODES = [
+  { id: 'yours', label: 'Your predictions', title: 'Pick every match yourself' },
+  { id: 'world', label: 'By world ranking', title: 'The better BWF World Ranking wins every match' },
+  { id: 'race',  label: 'By race ranking',  title: 'The better HSBC Race to Finals standing wins every match' },
+];
+
+/** Your picks for one discipline: { matchCode: entryKey }. */
+function predPicks(cat) {
+  if (!state.predict[cat]) state.predict[cat] = {};
+  return state.predict[cat];
+}
+
+/**
+ * Stamp the sheet as touched today. The PNG carries this date, so it has to be
+ * when the picks were made — not when the image was exported.
+ */
+function persistPredictions(cat) {
+  if (cat) state.predictAt[cat] = new Date().toISOString();
+  store.write('predict', state.predict);
+  store.write('predictAt', state.predictAt);
+}
+
+/**
+ * Auto-pick between two entries on a ranking board. Unranked entries (outside
+ * the pages we walked) fall back to the seeding, and an otherwise dead heat
+ * keeps the top side — arbitrary, but stable, so the bracket never flickers.
+ */
+function autoWinner(draw, board, t1, t2) {
+  const k1 = entryKey(t1), k2 = entryKey(t2);
+  const r1 = rankOf(draw.cat, k1, board), r2 = rankOf(draw.cat, k2, board);
+  if (r1 !== r2) return r1 < r2 ? t1 : t2;
+  const s = k => {
+    const e = draw.entries.get(k);
+    return e && e.seed ? Number(e.seed) : 999;
+  };
+  const s1 = s(k1), s2 = s(k2);
+  if (s1 !== s2) return s1 < s2 ? t1 : t2;
+  return t1;
+}
+
+/**
+ * Carry winners up the tree, column by column.
+ *
+ * Reality is deliberately NOT merged in: this is a prediction sheet, so the
+ * cards show who *you* said would be there. Real results only score it.
+ */
+function resolvePredictions(draw, mode) {
+  const picks = mode === 'yours' ? predPicks(draw.cat) : null;
+  const board = mode === 'yours' ? null : mode;
+
+  const teams = {}, winner = {}, verdict = {};
+  let open = 0, made = 0, decided = 0, hits = 0;
+
+  for (let c = 0; c <= draw.maxCol; c++) {
+    const n = cellsInCol(draw, c);
+    for (let r = 0; r < n; r++) {
+      const k = c + '-' + r;
+      const m = draw.cells[k];
+      const t1 = c === 0 ? (m && m.team1) || null : winner[(c - 1) + '-' + (2 * r)] || null;
+      const t2 = c === 0 ? (m && m.team2) || null : winner[(c - 1) + '-' + (2 * r + 1)] || null;
+      teams[k] = [t1, t2];
+
+      const k1 = entryKey(t1), k2 = entryKey(t2);
+      const isBye = c === 0 && m && draw.byeCodes.has(String(m.code));
+      let w = null;
+
+      // The denominator is every match that will ever need a pick, not just the
+      // ones with both sides known — otherwise the tally reads "1/32" early on
+      // and climbs to "63/63" as you fill the draw in, which looks like the
+      // target is moving away from you.
+      if (m && !isBye) open++;
+
+      if (isBye) {
+        w = t1 || t2;                       // nobody opposite: through on a walkover
+      } else if (k1 && k2) {
+        if (board) {
+          w = autoWinner(draw, board, t1, t2);
+          made++;
+        } else {
+          const pick = m && picks[String(m.code)];
+          if (pick === k1) w = t1; else if (pick === k2) w = t2;
+          if (w) made++;
+        }
+      }
+      // A half-empty card above round one means a feeder is still open — nobody
+      // advances from it, or the whole draw would fill itself in.
+
+      winner[k] = w;
+
+      // Score against what actually happened, whoever we thought would be here.
+      if (!isBye && m && (m.winner === 1 || m.winner === 2)) {
+        const real = entryKey(m['team' + m.winner]);
+        if (real) {
+          decided++;
+          if (w) {
+            const right = entryKey(w) === real;
+            verdict[k] = right ? 'hit' : 'miss';
+            if (right) hits++;
+          }
+          verdict[k + ':real'] = real;
+        }
+      }
+    }
+  }
+
+  const champion = winner[draw.maxCol + '-0'] || null;
+  return { teams, winner, verdict, champion, open, made, decided, hits };
+}
+
+/** Stale picks are kept, not pruned: flip an upset back and your sheet returns. */
+function setPick(draw, code, key) {
+  const picks = predPicks(draw.cat);
+  if (picks[String(code)] === key) delete picks[String(code)];
+  else picks[String(code)] = key;
+  persistPredictions(draw.cat);
+  renderPredict();
+}
+
+function predSide(m, t, which, isBye, res) {
+  const seed = m && m['team' + which + 'seed'];
+  const named = t && t.players && t.players.length;
+  const mine = teamIsMine(t);
+  const cls = ['pnode-side',
+    res.picked === which ? 'is-pick' : (res.picked ? 'is-out' : ''),
+    mine ? 'mine' : ''].join(' ');
+
+  // Column 0 carries BWF's own seeding; later cards are hypothetical, so the
+  // seed is looked up from the entry rather than from the (empty) draw cell.
+  const seedShown = seed || (res.seedOf ? res.seedOf(t) : '');
+
+  return `<div class="${cls}" data-side="${which}">
+    ${t && t.countryFlagUrl ? `<img src="${esc(t.countryFlagUrl)}" alt="" loading="lazy">` : '<span></span>'}
+    <span class="bs">${esc(seedText(seedShown))}</span>
+    <span class="bn">${named ? esc(teamName(t)) : '<span class="muted">&mdash;</span>'}</span>
+    ${isBye || !named ? '<span class="pw is-void"></span>'
+                      : `<span class="pw" title="Pick to win">W</span>`}
+  </div>`;
+}
+
+function renderPredict() {
+  const canvas = $('#predictCanvas');
+  const cat = state.predictCat;
+  const draw = state.draws[cat];
+  canvas.innerHTML = '';
+  paintPredictBar(null);
+
+  if (!draw) {
+    canvas.innerHTML = '<div class="status" style="margin:16px"><span class="spinner"></span>Loading the draw&hellip;</div>';
+    return;
+  }
+
+  const mode = state.predictMode;
+  const res = resolvePredictions(draw, mode);
+  const editable = mode === 'yours';
+  const seedOf = t => {
+    const e = draw.entries.get(entryKey(t));
+    return e ? e.seed : '';
+  };
+
+  const cols = draw.maxCol + 1;
+  const rows0 = cellsInCol(draw, 0);
+  // One extra column for the champion card.
+  const width  = brLeft(cols) + BR.CARD_W + BR.PAD * 2;
+  const height = rows0 * SLOT + BR.PAD * 2 + BR.LABEL_H;
+  canvas.style.width = width + 'px';
+  canvas.style.height = height + 'px';
+
+  const frag = document.createDocumentFragment();
+  const ox = BR.PAD, oy = BR.PAD + BR.LABEL_H;
+
+  for (let c = 0; c < cols; c++) {
+    const any = draw.cells['' + c + '-0'];
+    const name = (any && any.roundName) || ROUND_ORDER[c] || '';
+    const lab = el('div', 'bcol-label', esc(ROUND_LABEL[name] || name));
+    lab.style.cssText = `left:${ox + brLeft(c)}px;top:${BR.PAD}px;width:${BR.CARD_W}px`;
+    frag.appendChild(lab);
+  }
+  const champLab = el('div', 'bcol-label', 'Champion');
+  champLab.style.cssText = `left:${ox + brLeft(cols)}px;top:${BR.PAD}px;width:${BR.CARD_W}px`;
+  frag.appendChild(champLab);
+
+  // elbow connectors, plus one more into the champion card
+  for (let c = 1; c <= cols; c++) {
+    const n = c === cols ? 1 : cellsInCol(draw, c);
+    for (let r = 0; r < n; r++) {
+      const y1 = oy + brCentre(c - 1, 2 * r);
+      const y2 = oy + brCentre(c - 1, 2 * r + 1);
+      const yc = oy + brCentre(c, r);
+      const x0 = ox + brLeft(c - 1) + BR.CARD_W;
+      const xm = x0 + BR.CONN_W / 2;
+      const line = (l, t, w, h) => {
+        const d = el('div', 'bline');
+        d.style.cssText = `left:${l}px;top:${t}px;width:${w}px;height:${h}px`;
+        frag.appendChild(d);
+      };
+      if (c === cols) {
+        // The Final feeds one card, so it is a straight run, not an elbow.
+        line(x0, oy + brCentre(c - 1, 0), BR.CONN_W, 1);
+      } else {
+        line(x0, y1, BR.CONN_W / 2, 1);
+        line(x0, y2, BR.CONN_W / 2, 1);
+        line(xm, y1, 1, Math.max(1, y2 - y1));
+        line(xm, yc, BR.CONN_W / 2, 1);
+      }
+    }
+  }
+
+  for (let c = 0; c <= draw.maxCol; c++) {
+    const n = cellsInCol(draw, c);
+    for (let r = 0; r < n; r++) {
+      const k = c + '-' + r;
+      const m = draw.cells[k];
+      if (!m) continue;
+      const [t1, t2] = res.teams[k];
+      const w = res.winner[k];
+      const isBye = c === 0 && draw.byeCodes.has(String(m.code));
+      const live = !isBye && entryKey(t1) && entryKey(t2);
+      // A walkover has nothing to choose, so neither side is styled as a pick.
+      const picked = !isBye && w ? (entryKey(w) === entryKey(t1) ? 1 : 2) : 0;
+      const mark = res.verdict[k];
+
+      const node = el('div', 'pnode'
+        + (teamIsMine(t1) || teamIsMine(t2) ? ' is-mine' : '')
+        + (isBye ? ' is-bye' : '')
+        + (editable && live ? '' : ' is-locked')
+        + (mark ? ' is-' + mark : ''));
+      node.style.cssText =
+        `left:${ox + brLeft(c)}px;top:${oy + brCentre(c, r) - BR.CARD_H / 2}px;` +
+        `width:${BR.CARD_W}px;height:${BR.CARD_H}px`;
+      node.innerHTML = predSide(c === 0 ? m : null, t1, 1, isBye, { picked, seedOf })
+                     + predSide(c === 0 ? m : null, t2, 2, isBye, { picked, seedOf });
+
+      if (mark) {
+        const realKey = res.verdict[k + ':real'];
+        const realTeam = [m.team1, m.team2].find(t => entryKey(t) === realKey);
+        node.title = (mark === 'hit' ? 'Right — ' : 'Wrong — ') + teamName(realTeam) + ' won this';
+      }
+
+      if (editable && live) {
+        node.addEventListener('click', e => {
+          const side = e.target.closest('.pnode-side');
+          if (!side) return;
+          const t = side.dataset.side === '1' ? t1 : t2;
+          setPick(draw, m.code, entryKey(t));
+        });
+      }
+      frag.appendChild(node);
+    }
+  }
+
+  // champion card
+  const champ = el('div', 'pnode pchamp' + (res.champion && teamIsMine(res.champion) ? ' is-mine' : ''));
+  champ.style.cssText =
+    `left:${ox + brLeft(cols)}px;top:${oy + brCentre(draw.maxCol, 0) - BR.CARD_H / 2}px;` +
+    `width:${BR.CARD_W}px;height:${BR.CARD_H}px`;
+  champ.innerHTML = res.champion
+    ? `<div class="pnode-side is-pick">
+         ${res.champion.countryFlagUrl ? `<img src="${esc(res.champion.countryFlagUrl)}" alt="" loading="lazy">` : '<span></span>'}
+         <span class="bs">&#127942;</span>
+         <span class="bn">${esc(teamName(res.champion))}</span>
+         <span class="pw is-void"></span>
+       </div>`
+    : '<div class="pnode-side"><span></span><span class="bs">&#127942;</span><span class="bn muted">Not decided yet</span><span class="pw is-void"></span></div>';
+  frag.appendChild(champ);
+
+  canvas.appendChild(frag);
+  applyTransform(MAPS.predict);
+  paintPredictBar(res);
+}
+
+/** Mode buttons, tally and the action button beside them. */
+function paintPredictBar(res) {
+  $$('.pcat').forEach(b => b.classList.toggle('is-active', b.dataset.pcat === state.predictCat));
+  $$('.pmode').forEach(b => b.classList.toggle('is-active', b.dataset.pmode === state.predictMode));
+
+  const auto = state.predictMode !== 'yours';
+  const copy = $('#predictCopy'), clear = $('#predictClear');
+  copy.hidden = !auto;
+  clear.hidden = auto;
+
+  const box = $('#predictScore');
+  if (!res) { box.textContent = ''; return; }
+
+  const parts = [];
+  if (auto) {
+    const idx = state.ranks[rankSlot(state.predictMode, state.predictCat)];
+    if (!idx || !idx.__done) parts.push('Loading rankings&hellip;');
+    else parts.push(BOARDS[state.predictMode].label + ' bracket');
+  } else {
+    parts.push(`<b>${res.made}</b>/${res.open} picked`);
+  }
+  if (res.decided) parts.push(`<b>${res.hits}</b>/${res.decided} right so far`);
+  box.innerHTML = parts.join(' &middot; ');
+}
+
+function setPredictCat(c) {
+  state.predictCat = c;
+  store.write('predictCat', c);
+  paintCatChips();
+  renderPredict();
+  frameMap('predict');
+  loadDraw(c).then(() => { renderPredict(); }).catch(() => {});
+  ensurePredictRanks();
+}
+
+function setPredictMode(mode) {
+  state.predictMode = mode;
+  store.write('predictMode', mode);
+  renderPredict();
+  ensurePredictRanks();
+}
+
+/** Auto brackets need the ranking table for the board they are built on. */
+function ensurePredictRanks() {
+  const mode = state.predictMode;
+  if (mode === 'yours') return;
+  const cat = state.predictCat;
+  if (!state.draws[cat] || state.ranks[rankSlot(mode, cat)]) return;
+  loadRankIndex(cat, mode)
+    .then(() => { if (state.view === 'predict') renderPredict(); })
+    .catch(() => { /* falls back to seeding */ });
+}
+
+/** Copy the ranking-based bracket into your own sheet as a starting point. */
+function copyAutoToPicks() {
+  const draw = state.draws[state.predictCat];
+  if (!draw) return;
+  const res = resolvePredictions(draw, state.predictMode);
+  const picks = {};
+  for (const [k, m] of Object.entries(draw.cells)) {
+    if (!m) continue;
+    const w = res.winner[k];
+    const [t1, t2] = res.teams[k];
+    if (!w || !entryKey(t1) || !entryKey(t2)) continue;
+    if (k.startsWith('0-') && draw.byeCodes.has(String(m.code))) continue;
+    picks[String(m.code)] = entryKey(w);
+  }
+  state.predict[state.predictCat] = picks;
+  persistPredictions(state.predictCat);
+  setPredictMode('yours');
+}
+
+function clearPicks() {
+  state.predict[state.predictCat] = {};
+  delete state.predictAt[state.predictCat];
+  persistPredictions();
+  renderPredict();
+}
+
+/* ---- PNG export ----
+
+   Drawn by hand onto a 2× canvas rather than by rasterising the DOM: that
+   needs a library, and this file has no build step and loads nothing from a
+   CDN. The upside is a sheet laid out for sharing — title, discipline, and the
+   date the predictions were made baked in.
+
+   Flags are fetched with crossOrigin="anonymous". If BWF's image host declines
+   the CORS header the load simply fails and the flag is skipped, which is much
+   better than a tainted canvas that cannot be exported at all.
+*/
+
+const PNG_SCALE = 2;
+const flagPending = new Map();   // url -> Promise
+const flagReady = new Map();     // url -> HTMLImageElement | null (null = unusable)
+
+function loadFlag(url) {
+  if (!url) return Promise.resolve(null);
+  if (flagPending.has(url)) return flagPending.get(url);
+  const p = new Promise(res => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => { flagReady.set(url, img); res(img); };
+    img.onerror = () => { flagReady.set(url, null); res(null); };
+    img.src = url;
+  });
+  flagPending.set(url, p);
+  return p;
+}
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+/** Trim a name to fit a column, with an ellipsis if it has to be cut. */
+function fitText(ctx, text, max) {
+  if (ctx.measureText(text).width <= max) return text;
+  let s = text;
+  while (s.length > 1 && ctx.measureText(s + '…').width > max) s = s.slice(0, -1);
+  return s + '…';
+}
+
+async function exportPredictionsPng(btn) {
+  const cat = state.predictCat;
+  const draw = state.draws[cat];
+  if (!draw) return;
+
+  const label = btn && btn.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = 'Rendering…'; }
+  try {
+    const mode = state.predictMode;
+    const res = resolvePredictions(draw, mode);
+
+    const HEAD = 76, FOOT = 34;
+    const cols = draw.maxCol + 1;
+    const rows0 = cellsInCol(draw, 0);
+    const w = brLeft(cols) + BR.CARD_W + BR.PAD * 2;
+    const h = rows0 * SLOT + BR.PAD * 2 + BR.LABEL_H + HEAD + FOOT;
+
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(w * PNG_SCALE);
+    cv.height = Math.round(h * PNG_SCALE);
+    const ctx = cv.getContext('2d');
+    ctx.scale(PNG_SCALE, PNG_SCALE);
+
+    const font = cssVar('--font') || 'system-ui, sans-serif';
+    const C = {
+      bg: cssVar('--bg') || '#111', surface: cssVar('--surface') || '#1e1e1e',
+      border: cssVar('--border') || '#444', soft: cssVar('--border-soft') || '#333',
+      text: cssVar('--text') || '#eee', dim: cssVar('--text-dim') || '#bbb',
+      muted: cssVar('--text-muted') || '#888',
+      accent: cssVar('--accent') || '#df2027', accentFg: cssVar('--accent-fg') || '#fff',
+      accentText: cssVar('--accent-text') || '#ff5f64',
+    };
+
+    ctx.fillStyle = C.bg;
+    ctx.fillRect(0, 0, w, h);
+
+    // --- header ---
+    const made = state.predictAt[cat];
+    const stamp = new Date(made || Date.now())
+      .toLocaleDateString([], { day: 'numeric', month: 'long', year: 'numeric' });
+    const source = mode === 'yours'
+      ? 'Predictions made ' + stamp
+      : BOARDS[mode].label + ' — the better-ranked side wins every match';
+
+    ctx.fillStyle = C.accent;
+    ctx.fillRect(0, 0, w, 4);
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = C.text;
+    ctx.font = `700 21px ${font}`;
+    ctx.fillText(`BWF World Championships 2026 · ${CAT_LABEL[cat]}`, BR.PAD, 34);
+    ctx.fillStyle = C.muted;
+    ctx.font = `400 12.5px ${font}`;
+    ctx.fillText(`New Delhi, 17–23 August 2026 · ${source}`, BR.PAD, 54);
+
+    const oy = HEAD + BR.PAD + BR.LABEL_H, ox = BR.PAD;
+
+    // --- round headings ---
+    ctx.font = `700 11px ${font}`;
+    ctx.fillStyle = C.muted;
+    for (let c = 0; c < cols; c++) {
+      const any = draw.cells['' + c + '-0'];
+      const name = (any && any.roundName) || ROUND_ORDER[c] || '';
+      ctx.fillText((ROUND_LABEL[name] || name).toUpperCase(), ox + brLeft(c), HEAD + BR.PAD + 12);
+    }
+    ctx.fillText('CHAMPION', ox + brLeft(cols), HEAD + BR.PAD + 12);
+
+    // --- connectors ---
+    ctx.fillStyle = C.border;
+    for (let c = 1; c <= cols; c++) {
+      const n = c === cols ? 1 : cellsInCol(draw, c);
+      for (let r = 0; r < n; r++) {
+        const x0 = ox + brLeft(c - 1) + BR.CARD_W, xm = x0 + BR.CONN_W / 2;
+        if (c === cols) { ctx.fillRect(x0, oy + brCentre(c - 1, 0), BR.CONN_W, 1); continue; }
+        const y1 = oy + brCentre(c - 1, 2 * r), y2 = oy + brCentre(c - 1, 2 * r + 1);
+        ctx.fillRect(x0, y1, BR.CONN_W / 2, 1);
+        ctx.fillRect(x0, y2, BR.CONN_W / 2, 1);
+        ctx.fillRect(xm, y1, 1, Math.max(1, y2 - y1));
+        ctx.fillRect(xm, oy + brCentre(c, r), BR.CONN_W / 2, 1);
+      }
+    }
+
+    // Warm the flag cache first so drawing itself stays synchronous.
+    const flags = new Set();
+    for (const [k] of Object.entries(res.teams)) {
+      for (const t of res.teams[k]) if (t && t.countryFlagUrl) flags.add(t.countryFlagUrl);
+    }
+    await Promise.all(Array.from(flags).map(loadFlag));
+
+    const drawSide = (t, x, y, seed, picked, dimmed) => {
+      const cx = x + 9;
+      const bitmap = t && t.countryFlagUrl ? flagReady.get(t.countryFlagUrl) : null;
+      ctx.globalAlpha = dimmed ? 0.45 : 1;
+      if (bitmap) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx + 7, y + BR.CARD_H / 4, 7, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(bitmap, cx, y + BR.CARD_H / 4 - 7, 14, 14);
+        ctx.restore();
+      }
+      if (seed) {
+        ctx.fillStyle = C.accentText;
+        ctx.font = `700 9.5px ${font}`;
+        ctx.fillText('[' + seed + ']', x + 26, y + BR.CARD_H / 4 + 3.5);
+      }
+      ctx.fillStyle = t ? C.text : C.muted;
+      ctx.font = `${picked ? 700 : 400} 11.5px ${font}`;
+      const nameX = x + 50, nameMax = BR.CARD_W - 50 - 24;
+      ctx.fillText(fitText(ctx, t ? teamName(t) : '—', nameMax), nameX, y + BR.CARD_H / 4 + 4);
+      if (t) {
+        const bx = x + BR.CARD_W - 22, by = y + BR.CARD_H / 4 - 7;
+        ctx.fillStyle = picked ? C.accent : 'transparent';
+        if (picked) { ctx.fillRect(bx, by, 15, 14); }
+        ctx.fillStyle = picked ? C.accentFg : C.muted;
+        ctx.font = `700 9.5px ${font}`;
+        ctx.fillText('W', bx + 4, by + 10.5);
+      }
+      ctx.globalAlpha = 1;
+    };
+
+    // --- cards ---
+    for (let c = 0; c <= draw.maxCol; c++) {
+      const n = cellsInCol(draw, c);
+      for (let r = 0; r < n; r++) {
+        const k = c + '-' + r;
+        const m = draw.cells[k];
+        if (!m) continue;
+        const [t1, t2] = res.teams[k];
+        const win = res.winner[k];
+        const isBye = c === 0 && draw.byeCodes.has(String(m.code));
+        const p1 = !isBye && win && entryKey(win) === entryKey(t1);
+        const p2 = !isBye && win && entryKey(win) === entryKey(t2);
+        const x = ox + brLeft(c), y = oy + brCentre(c, r) - BR.CARD_H / 2;
+
+        ctx.globalAlpha = isBye ? 0.5 : 1;
+        ctx.fillStyle = C.surface;
+        ctx.fillRect(x, y, BR.CARD_W, BR.CARD_H);
+        ctx.strokeStyle = C.soft;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x + 0.5, y + 0.5, BR.CARD_W - 1, BR.CARD_H - 1);
+        ctx.fillStyle = C.border;
+        ctx.fillRect(x, y, 3, BR.CARD_H);                     // accent rail
+        ctx.fillRect(x, y + BR.CARD_H / 2, BR.CARD_W, 1);     // split
+        ctx.globalAlpha = 1;
+
+        const seedOf = t => {
+          if (c === 0) return t === t1 ? m.team1seed : m.team2seed;
+          const e = draw.entries.get(entryKey(t));
+          return e ? e.seed : '';
+        };
+        drawSide(t1, x, y, seedOf(t1), p1, !!win && !p1);
+        drawSide(t2, x, y + BR.CARD_H / 2, seedOf(t2), p2, !!win && !p2);
+      }
+    }
+
+    // --- champion ---
+    const cx0 = ox + brLeft(cols), cy0 = oy + brCentre(draw.maxCol, 0) - BR.CARD_H / 2;
+    ctx.fillStyle = C.surface;
+    ctx.fillRect(cx0, cy0, BR.CARD_W, BR.CARD_H);
+    ctx.strokeStyle = C.accent;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(cx0 + 0.75, cy0 + 0.75, BR.CARD_W - 1.5, BR.CARD_H - 1.5);
+    ctx.fillStyle = C.muted;
+    ctx.font = `700 9px ${font}`;
+    ctx.fillText('CHAMPION', cx0 + 12, cy0 + 19);
+    ctx.fillStyle = res.champion ? C.text : C.muted;
+    ctx.font = `700 13px ${font}`;
+    ctx.fillText(fitText(ctx, res.champion ? teamName(res.champion) : 'Not decided yet', BR.CARD_W - 24),
+      cx0 + 12, cy0 + 39);
+
+    // --- footer ---
+    ctx.fillStyle = C.muted;
+    ctx.font = `400 11px ${font}`;
+    ctx.fillText('Unofficial fan tool · draw data © BWF · not affiliated with the Badminton World Federation',
+      BR.PAD, h - 14);
+
+    const blob = await new Promise(r => cv.toBlob(r, 'image/png'));
+    if (!blob) throw new Error('canvas export failed');
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `wc2026-${cat}-predictions-${(made || new Date().toISOString()).slice(0, 10)}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  } catch (e) {
+    if (btn) { btn.textContent = 'Export failed'; setTimeout(() => { btn.textContent = label; }, 2200); }
+    return;
+  } finally {
+    if (btn) { btn.disabled = false; if (btn.textContent === 'Rendering…') btn.textContent = label; }
+  }
 }
 
 /* ============================ head-to-head ============================
@@ -1947,6 +2598,8 @@ function renderAll() {
   } else if (state.view === 'players') {
     renderMyPlayers();
     renderPlayerDetail();
+  } else if (state.view === 'predict') {
+    renderPredict();
   } else {
     renderBracket();
   }
@@ -1967,9 +2620,8 @@ function setView(v) {
   renderAll();
 
   // The viewport has no size until the section is visible, so fit afterwards.
-  if (v === 'bracket' && first) {
-    requestAnimationFrame(() => (state.selected.size ? jumpToMine() : fitBracket()));
-  }
+  if ((v === 'bracket' || v === 'predict') && first) frameMap(v);
+  if (v === 'predict') ensurePredictRanks();
 }
 
 function paintCatChips() {
@@ -1984,6 +2636,7 @@ function paintCatChips() {
     b.setAttribute('aria-pressed', String(on));
   });
   $$('.bcat').forEach(b => b.classList.toggle('is-active', b.dataset.bcat === state.bracketCat));
+  $$('.pcat').forEach(b => b.classList.toggle('is-active', b.dataset.pcat === state.predictCat));
 }
 
 /** Toggle one discipline on or off. Turning the last one off is a no-op. */
@@ -2017,15 +2670,16 @@ function soloCat(c) {
 
 function setBracketCat(c) {
   state.bracketCat = c;
+  store.write('bracketCat', c);
   paintCatChips();
   renderBracket();
-  requestAnimationFrame(() => (state.selected.size ? jumpToMine() : fitBracket()));
+  frameMap('bracket');
   loadDraw(c).then(() => { renderBracket(); }).catch(() => {});
 }
 
-/** Make sure every switched-on discipline (and the bracket's) is loaded. */
+/** Make sure every switched-on discipline (and the map views') is loaded. */
 async function ensureCats() {
-  const want = Array.from(new Set([...activeCats(), state.bracketCat]));
+  const want = Array.from(new Set([...activeCats(), state.bracketCat, state.predictCat]));
   for (const c of want) {
     if (state.draws[c]) continue;
     try {
@@ -2058,6 +2712,11 @@ function stepCat(delta) {
   if (state.view === 'bracket') {
     const i = CATS.indexOf(state.bracketCat);
     setBracketCat(CATS[(i + delta + CATS.length) % CATS.length]);
+    return;
+  }
+  if (state.view === 'predict') {
+    const i = CATS.indexOf(state.predictCat);
+    setPredictCat(CATS[(i + delta + CATS.length) % CATS.length]);
     return;
   }
   const ring = [...CATS, 'all'];
@@ -2096,15 +2755,16 @@ function initHotkeys() {
 
     // Zoom the bracket. Covers the main row (+ needs Shift on most layouts, so
     // '=' counts too) and the numpad, via e.code so layout doesn't matter.
-    if (state.view === 'bracket') {
+    if (state.view === 'bracket' || state.view === 'predict') {
+      const cam = mapFor();
       const zoomIn  = e.key === '+' || e.key === '=' || e.code === 'NumpadAdd' || e.code === 'Equal';
       const zoomOut = e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract' || e.code === 'Minus';
-      if (zoomIn)  { e.preventDefault(); setZoom(state.zoom * 1.2); return; }
-      if (zoomOut) { e.preventDefault(); setZoom(state.zoom / 1.2); return; }
-      if (e.key === 'f' || e.key === 'F') { e.preventDefault(); fitBracket(); return; }
+      if (zoomIn)  { e.preventDefault(); setZoom(cam, cam.zoom * 1.2); return; }
+      if (zoomOut) { e.preventDefault(); setZoom(cam, cam.zoom / 1.2); return; }
+      if (e.key === 'f' || e.key === 'F') { e.preventDefault(); fitBracket(cam); return; }
       // 0 resets to 100%, the same convention browsers use for ctrl+0.
       if (e.key === '0' || e.code === 'Numpad0' || e.code === 'Digit0') {
-        e.preventDefault(); setZoom(1); return;
+        e.preventDefault(); setZoom(cam, 1); return;
       }
     }
 
@@ -2126,12 +2786,15 @@ function showError(e) {
     'It rate-limits bursts of requests — wait a moment and reload. (' + (e && e.message ? e.message : 'unknown error') + ')';
 }
 
+/**
+ * BWF red on dark is the default look, regardless of the system setting — the
+ * tool is meant to feel like a scoreboard. Both toggles still stick once used.
+ */
 function applyTheme() {
   const skin = store.read('skin', 'bwf');
-  const mode = store.read('mode', null);
+  const mode = store.read('mode', 'dark');
   document.documentElement.dataset.skin = skin;
-  if (mode) document.documentElement.dataset.mode = mode;
-  else delete document.documentElement.dataset.mode;
+  document.documentElement.dataset.mode = mode;
 }
 
 function initTheme() {
@@ -2143,9 +2806,7 @@ function initTheme() {
   };
 
   $('#modeToggle').onclick = () => {
-    const sysLight = window.matchMedia('(prefers-color-scheme: light)').matches;
-    const cur = store.read('mode', null) || (sysLight ? 'light' : 'dark');
-    store.write('mode', cur === 'dark' ? 'light' : 'dark');
+    store.write('mode', store.read('mode', 'dark') === 'dark' ? 'light' : 'dark');
     applyTheme();
   };
 }
@@ -2157,14 +2818,35 @@ async function init() {
   $$('.tab').forEach(t => t.onclick = () => setView(t.dataset.view));
   $$('.cat').forEach(b => b.onclick = () => toggleCat(b.dataset.cat));
   $$('.bcat').forEach(b => b.onclick = () => setBracketCat(b.dataset.bcat));
+  $$('.pcat').forEach(b => b.onclick = () => setPredictCat(b.dataset.pcat));
+  $$('.pmode').forEach(b => b.onclick = () => setPredictMode(b.dataset.pmode));
+
+  // --- predictions ---
+  state.predict = store.read('predict', {}) || {};
+  state.predictAt = store.read('predictAt', {}) || {};
+  const savedMode = store.read('predictMode', 'yours');
+  if (PRED_MODES.some(m => m.id === savedMode)) state.predictMode = savedMode;
+  $('#predictClear').onclick = clearPicks;
+  $('#predictCopy').onclick = copyAutoToPicks;
+  $('#predictPng').onclick = e => exportPredictionsPng(e.currentTarget);
 
   // Restore the discipline filter unless the URL already specified one.
   if (!/[?&#]c=/.test(location.hash)) {
     const saved = store.read('cats', null);
     if (Array.isArray(saved) && saved.length) {
       const valid = saved.filter(c => CATS.includes(c));
-      if (valid.length) { state.cats = new Set(valid); state.bracketCat = valid[0]; }
+      if (valid.length) { state.cats = new Set(valid); state.bracketCat = state.predictCat = valid[0]; }
     }
+  }
+
+  // Both map views show one draw at a time, and each remembers its own — your
+  // half-filled prediction sheet should still be there tomorrow. A link that
+  // names disciplines wins, since that is what the sender meant to show.
+  if (!state.catsFromLink) {
+    const bc = store.read('bracketCat', null);
+    const pc = store.read('predictCat', null);
+    if (CATS.includes(bc)) state.bracketCat = bc;
+    if (CATS.includes(pc)) state.predictCat = pc;
   }
 
   $('#onlyMine').checked = state.onlyMine;
@@ -2201,7 +2883,10 @@ async function init() {
   };
   renderPresetPanel();
 
-  initBracketInteraction();
+  initBracketInteraction(MAPS.bracket);
+  initBracketInteraction(MAPS.predict);
+  initZoomBar(MAPS.bracket, { in: '#zoomIn', out: '#zoomOut', fit: '#zoomFit', mine: '#zoomMine' });
+  initZoomBar(MAPS.predict, { in: '#pZoomIn', out: '#pZoomOut', fit: '#pZoomFit', mine: '#pZoomMine' });
   initHotkeys();
 
   // Selections are shareable URLs, so honour back/forward and pasted links
