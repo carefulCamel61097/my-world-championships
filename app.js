@@ -242,6 +242,42 @@ function teamName(team) {
   return team.players.map(p => p.nameDisplay).join(' / ');
 }
 
+/**
+ * The family name out of a BWF display name, which capitalises it: "Thom
+ * GICQUEL" → GICQUEL, "SHI Yu Qi" → SHI. Checked against all 416 entrants;
+ * 400 have exactly one all-caps token and the rest are handled here:
+ *
+ *   compound surnames  Kelly VAN BUITEN → VAN BUITEN, Nour AHMED YOUSSRI
+ *   initials           M.R. ARJUN → ARJUN, PUSARLA V. Sindhu → PUSARLA
+ *   disambiguators     VU Thi Trang (B) → VU
+ *   no case signal     THET HTAR THUZAR, CHEN ZHI YI — every token is caps, so
+ *                      there is nothing to key on. Kept whole: a name that is
+ *                      too long merely gets truncated, whereas guessing which
+ *                      token to drop would be wrong about half the time (the
+ *                      family name leads in Chinese and Korean names and
+ *                      trails in Indian ones, and Burmese names have none).
+ */
+function surnameOf(nameDisplay) {
+  const toks = String(nameDisplay || '').trim().split(/\s+/).filter(t => t && t[0] !== '(');
+  const isCaps = t => /\p{Lu}/u.test(t) && t === t.toUpperCase() && !t.includes('.');
+  const caps = toks.filter(isCaps);
+  if (!caps.length) return toks[toks.length - 1] || '';
+  if (caps.length === toks.length) return toks.join(' ');
+  return caps.join(' ');
+}
+
+/**
+ * Name for the small bracket and prediction cards. A doubles pair does not fit
+ * at 208px — the second player was being cut off entirely — so pairs show both
+ * surnames. Singles are left alone, and so is every wider surface (schedule,
+ * player panel, head-to-head), which has room for the full names.
+ */
+function cardName(team) {
+  if (!team || !team.players || !team.players.length) return 'TBD';
+  if (team.players.length < 2) return teamName(team);
+  return team.players.map(p => surnameOf(p.nameDisplay)).join(' / ');
+}
+
 /** Draw entry → the team shape openH2H() and teamName() expect. */
 function entryTeam(entry) {
   if (!entry) return null;
@@ -1292,7 +1328,7 @@ const SLOT = BR.CARD_H + BR.GAP_Y;
 const brCentre = (c, r) => (r + 0.5) * Math.pow(2, c) * SLOT;
 const brLeft   = c => c * (BR.CARD_W + BR.CONN_W);
 
-function bracketSide(m, which, mine) {
+function bracketSide(m, which, mine, isBye) {
   const team = m['team' + which];
   const seed = m['team' + which + 'seed'];
   const isWin = m.winner === which;
@@ -1305,7 +1341,8 @@ function bracketSide(m, which, mine) {
   return `<div class="${cls}">
     ${team && team.countryFlagUrl ? `<img src="${esc(team.countryFlagUrl)}" alt="" loading="lazy">` : '<span></span>'}
     <span class="bs">${esc(seedText(seed))}</span>
-    <span class="bn">${named ? esc(teamName(team)) : '<span class="muted">—</span>'}</span>
+    <span class="bn">${named ? esc(cardName(team))
+      : `<span class="muted">${isBye ? 'Bye' : '—'}</span>`}</span>
     <span class="bsc">${esc(pts)}</span>
   </div>`;
 }
@@ -1376,10 +1413,11 @@ function renderBracket() {
     node.style.top = (oy + brCentre(c, r) - BR.CARD_H / 2) + 'px';
     node.style.width = BR.CARD_W + 'px';
     node.style.height = BR.CARD_H + 'px';
-    node.innerHTML = bracketSide(m, 1, mine1) + bracketSide(m, 2, mine2);
+    node.innerHTML = bracketSide(m, 1, mine1, isBye) + bracketSide(m, 2, mine2, isBye);
 
     if (entryKey(m.team1) && entryKey(m.team2)) {
-      node.title = 'Head-to-head';
+      // Doubles cards show surnames only, so the full pair lives on the tooltip.
+      node.title = `${teamName(m.team1)}  v  ${teamName(m.team2)}\nHead-to-head`;
       // A click that ended a pan is swallowed by the capture-phase guard on the
       // viewport, so this only ever runs for a genuine click.
       node.addEventListener('click', () => openH2H(m.team1, m.team2));
@@ -1390,7 +1428,7 @@ function renderBracket() {
   }
 
   canvas.appendChild(frag);
-  applyTransform(MAPS.bracket);
+  frameMap('bracket');
 }
 
 /* ---- cameras ----
@@ -1466,13 +1504,17 @@ function fitBracket(cam) {
   applyTransform(cam);
 }
 
-/** Centre the view on the first followed player in this draw. */
+/**
+ * Centre the view on the first followed player in this draw, at the zoom you
+ * are already using — except when that is so far out the names are unreadable,
+ * which would make "jump to my player" land on an unrecognisable speck.
+ */
 function jumpToMine(cam) {
   cam = cam || mapFor();
   const node = $(cam.canvas + ' ' + cam.node + '.is-mine');
-  if (!node) { fitBracket(cam); return; }
+  if (!node) { applyTransform(cam); return; }
   const vp = $(cam.vp).getBoundingClientRect();
-  cam.zoom = Math.min(1.1, Math.max(cam.zoom, 0.75));
+  if (cam.zoom < 0.5) cam.zoom = 1;
   const nx = parseFloat(node.style.left) + BR.CARD_W / 2;
   const ny = parseFloat(node.style.top) + BR.CARD_H / 2;
   cam.pan.x = vp.width / 2 - nx * cam.zoom;
@@ -1480,10 +1522,27 @@ function jumpToMine(cam) {
   applyTransform(cam);
 }
 
-/** Re-frame a map view once its section is actually visible and has a size. */
+/**
+ * Frame a map view once its section is visible and has a size.
+ *
+ * Every draw opens at 100% — a bracket scaled to fit is 63 cards of unreadable
+ * text, and *Fit* is right there for anyone who wants the overview. The zoom
+ * is only reset when the discipline changes, so tabbing away to the Players
+ * view and back does not throw away where you were looking.
+ */
 function frameMap(view) {
   const cam = mapFor(view);
-  requestAnimationFrame(() => (state.selected.size ? jumpToMine(cam) : fitBracket(cam)));
+  const cat = view === 'predict' ? state.predictCat : state.bracketCat;
+  // Nothing to frame against until the draw is in: leave framedFor unset so
+  // the render that follows the fetch does the framing instead.
+  if (!state.draws[cat] || cam.framedFor === cat) {
+    requestAnimationFrame(() => applyTransform(cam));
+    return;
+  }
+  cam.framedFor = cat;
+  cam.zoom = 1;
+  cam.pan.x = cam.pan.y = 24;
+  requestAnimationFrame(() => (state.selected.size ? jumpToMine(cam) : applyTransform(cam)));
 }
 
 let canvasDidPan = false;
@@ -1654,7 +1713,11 @@ function resolvePredictions(draw, mode) {
       if (m && !isBye) open++;
 
       if (isBye) {
-        w = t1 || t2;                       // nobody opposite: through on a walkover
+        // Through on a walkover. Test with entryKey, not truthiness: BWF fills
+        // the empty half of a bye with a team object that has no players, so
+        // `t1 || t2` happily advances the *gap* — and when the gap is team1
+        // (which is half of them) the pair never reaches round two at all.
+        w = k1 ? t1 : (k2 ? t2 : null);
       } else if (k1 && k2) {
         if (board) {
           w = autoWinner(draw, board, t1, t2);
@@ -1714,7 +1777,8 @@ function predSide(m, t, which, isBye, res) {
   return `<div class="${cls}" data-side="${which}">
     ${t && t.countryFlagUrl ? `<img src="${esc(t.countryFlagUrl)}" alt="" loading="lazy">` : '<span></span>'}
     <span class="bs">${esc(seedText(seedShown))}</span>
-    <span class="bn">${named ? esc(teamName(t)) : '<span class="muted">&mdash;</span>'}</span>
+    <span class="bn">${named ? esc(cardName(t))
+      : `<span class="muted">${isBye ? 'Bye' : '&mdash;'}</span>`}</span>
     ${isBye || !named ? '<span class="pw is-void"></span>'
                       : `<span class="pw" title="Pick to win">W</span>`}
   </div>`;
@@ -1813,10 +1877,16 @@ function renderPredict() {
       node.innerHTML = predSide(c === 0 ? m : null, t1, 1, isBye, { picked, seedOf })
                      + predSide(c === 0 ? m : null, t2, 2, isBye, { picked, seedOf });
 
+      // Doubles cards show surnames only, so the full pairs live on the tooltip.
+      const full = entryKey(t1) && entryKey(t2)
+        ? `${teamName(t1)}  v  ${teamName(t2)}` : '';
       if (mark) {
         const realKey = res.verdict[k + ':real'];
         const realTeam = [m.team1, m.team2].find(t => entryKey(t) === realKey);
-        node.title = (mark === 'hit' ? 'Right — ' : 'Wrong — ') + teamName(realTeam) + ' won this';
+        node.title = (full ? full + '\n' : '') +
+          (mark === 'hit' ? 'Right — ' : 'Wrong — ') + teamName(realTeam) + ' won this';
+      } else if (full) {
+        node.title = full;
       }
 
       if (editable && live) {
@@ -1836,18 +1906,19 @@ function renderPredict() {
   champ.style.cssText =
     `left:${ox + brLeft(cols)}px;top:${oy + brCentre(draw.maxCol, 0) - BR.CARD_H / 2}px;` +
     `width:${BR.CARD_W}px;height:${BR.CARD_H}px`;
+  if (res.champion) champ.title = teamName(res.champion);
   champ.innerHTML = res.champion
     ? `<div class="pnode-side is-pick">
          ${res.champion.countryFlagUrl ? `<img src="${esc(res.champion.countryFlagUrl)}" alt="" loading="lazy">` : '<span></span>'}
          <span class="bs">&#127942;</span>
-         <span class="bn">${esc(teamName(res.champion))}</span>
+         <span class="bn">${esc(cardName(res.champion))}</span>
          <span class="pw is-void"></span>
        </div>`
     : '<div class="pnode-side"><span></span><span class="bs">&#127942;</span><span class="bn muted">Not decided yet</span><span class="pw is-void"></span></div>';
   frag.appendChild(champ);
 
   canvas.appendChild(frag);
-  applyTransform(MAPS.predict);
+  frameMap('predict');
   paintPredictBar(res);
 }
 
@@ -1943,6 +2014,15 @@ function clearPicks() {
 */
 
 const PNG_SCALE = 2;
+
+/**
+ * One colour per quarter-finalist, for tracing their route back through the
+ * draw on the exported sheet. Eight well-separated hues, all of which hold up
+ * on the light background as well as the dark one.
+ */
+const PATH_COLOURS = ['#e6194b','#f58231','#c99000','#3cb44b',
+                      '#159eb5','#4363d8','#8f2fb0','#dd3f9a'];
+
 const flagPending = new Map();   // url -> Promise
 const flagReady = new Map();     // url -> HTMLImageElement | null (null = unusable)
 
@@ -1970,6 +2050,40 @@ function fitText(ctx, text, max) {
   let s = text;
   while (s.length > 1 && ctx.measureText(s + '…').width > max) s = s.slice(0, -1);
   return s + '…';
+}
+
+/**
+ * The route each predicted quarter-finalist took to get there: walk back from
+ * the quarter-final card, one column at a time, asking which feeder produced
+ * the side we are following. Returns up to eight { colour, cells } chains,
+ * each cell tagged with the half of the card that belongs to that player.
+ */
+function quarterFinalPaths(draw, res) {
+  const qfCol = draw.maxCol - 2;                 // Final, Semi, Quarter
+  if (qfCol < 1) return [];
+  const paths = [];
+  let n = 0;
+  for (let r = 0; r < cellsInCol(draw, qfCol); r++) {
+    const slot = res.teams[qfCol + '-' + r] || [null, null];
+    for (const side of [1, 2]) {
+      const colour = PATH_COLOURS[n++ % PATH_COLOURS.length];
+      const team = slot[side - 1];
+      const key = entryKey(team);
+      if (!key) continue;                        // nobody predicted this far yet
+
+      const cells = [{ c: qfCol, r, side }];
+      let c = qfCol, row = r, s = side;
+      while (c > 0) {
+        row = 2 * row + (s - 1);                 // the feeder this side came out of
+        c -= 1;
+        const feeder = res.teams[c + '-' + row] || [null, null];
+        s = entryKey(feeder[0]) === key ? 1 : 2;
+        cells.push({ c, r: row, side: s });
+      }
+      paths.push({ colour, cells });
+    }
+  }
+  return paths;
 }
 
 async function exportPredictionsPng(btn) {
@@ -2060,8 +2174,11 @@ async function exportPredictionsPng(btn) {
     }
     await Promise.all(Array.from(flags).map(loadFlag));
 
-    const drawSide = (t, x, y, seed, picked, dimmed) => {
+    const drawSide = (t, x, y, seed, picked, dimmed, bye) => {
       const cx = x + 9;
+      // BWF fills the empty half of a bye with a players-less team object, so
+      // "is there a team here" has to be entryKey, not truthiness.
+      const named = !!entryKey(t);
       const bitmap = t && t.countryFlagUrl ? flagReady.get(t.countryFlagUrl) : null;
       ctx.globalAlpha = dimmed ? 0.45 : 1;
       if (bitmap) {
@@ -2077,11 +2194,12 @@ async function exportPredictionsPng(btn) {
         ctx.font = `700 9.5px ${font}`;
         ctx.fillText('[' + seed + ']', x + 26, y + BR.CARD_H / 4 + 3.5);
       }
-      ctx.fillStyle = t ? C.text : C.muted;
+      ctx.fillStyle = named ? C.text : C.muted;
       ctx.font = `${picked ? 700 : 400} 11.5px ${font}`;
       const nameX = x + 50, nameMax = BR.CARD_W - 50 - 24;
-      ctx.fillText(fitText(ctx, t ? teamName(t) : '—', nameMax), nameX, y + BR.CARD_H / 4 + 4);
-      if (t) {
+      ctx.fillText(fitText(ctx, named ? cardName(t) : (bye ? 'Bye' : '—'), nameMax),
+        nameX, y + BR.CARD_H / 4 + 4);
+      if (named) {
         const bx = x + BR.CARD_W - 22, by = y + BR.CARD_H / 4 - 7;
         ctx.fillStyle = picked ? C.accent : 'transparent';
         if (picked) { ctx.fillRect(bx, by, 15, 14); }
@@ -2122,8 +2240,28 @@ async function exportPredictionsPng(btn) {
           const e = draw.entries.get(entryKey(t));
           return e ? e.seed : '';
         };
-        drawSide(t1, x, y, seedOf(t1), p1, !!win && !p1);
-        drawSide(t2, x, y + BR.CARD_H / 2, seedOf(t2), p2, !!win && !p2);
+        drawSide(t1, x, y, seedOf(t1), p1, !!win && !p1, isBye);
+        drawSide(t2, x, y + BR.CARD_H / 2, seedOf(t2), p2, !!win && !p2, isBye);
+      }
+    }
+
+    // --- quarter-final routes, over the cards so the rails read as tabs ---
+    for (const p of quarterFinalPaths(draw, res)) {
+      ctx.fillStyle = p.colour;
+      for (const cell of p.cells) {
+        const x = ox + brLeft(cell.c);
+        const y = oy + brCentre(cell.c, cell.r) - BR.CARD_H / 2;
+        // Only the half of the card that belongs to this player.
+        ctx.fillRect(x, y + (cell.side === 1 ? 0 : BR.CARD_H / 2), 3, BR.CARD_H / 2);
+
+        const to = p.cells.find(o => o.c === cell.c + 1);
+        if (!to) continue;
+        const x0 = x + BR.CARD_W, xm = x0 + BR.CONN_W / 2;
+        const y1 = oy + brCentre(cell.c, cell.r);
+        const y2 = oy + brCentre(to.c, to.r);
+        ctx.fillRect(x0, y1 - 1, BR.CONN_W / 2, 2);
+        ctx.fillRect(xm - 1, Math.min(y1, y2), 2, Math.max(2, Math.abs(y2 - y1)));
+        ctx.fillRect(xm, y2 - 1, BR.CONN_W / 2, 2);
       }
     }
 
@@ -2139,7 +2277,7 @@ async function exportPredictionsPng(btn) {
     ctx.fillText('CHAMPION', cx0 + 12, cy0 + 19);
     ctx.fillStyle = res.champion ? C.text : C.muted;
     ctx.font = `700 13px ${font}`;
-    ctx.fillText(fitText(ctx, res.champion ? teamName(res.champion) : 'Not decided yet', BR.CARD_W - 24),
+    ctx.fillText(fitText(ctx, res.champion ? cardName(res.champion) : 'Not decided yet', BR.CARD_W - 24),
       cx0 + 12, cy0 + 39);
 
     // --- footer ---

@@ -78,6 +78,25 @@ choice persists and travels in the URL (`c=all`, or `c=ms,wd`).
    selector** in its toolbar, independent of the filter chips above.
 4. **Predictions** — the same tree, but you fill it in. See below.
 
+**Names on the bracket cards.** A card is 208px, which fits one full name but not two —
+a doubles pair was being cut off after the first player, so the second name was invisible.
+Bracket and Predictions cards therefore show **surnames only for pairs** (`GICQUEL /
+DELRUE`, `LIU / TAN`); singles are untouched, and so is every wider surface — the
+schedule, the player panel and the head-to-head all keep full names. Hovering a card
+gives the full pair. BWF capitalises the family name, which is what `surnameOf()` keys
+on; see [Verified against live data](#verified-against-live-data) for how the awkward
+cases are handled.
+
+**Byes.** In doubles, 48 pairs enter a 64 draw, so 16 first-round cells have one side
+empty. Those cards are drawn at full strength with a dashed border, and the empty half
+reads *Bye* rather than an em-dash: that pair is already through to round two, which is
+information, not an inactive cell.
+
+**Zoom.** Both map views open each draw at **100%**, because a bracket scaled to fit is
+63 cards of unreadable text (*Fit* is one button away for the overview). The zoom only
+resets when you change discipline — tabbing to another view and back keeps where you
+were looking.
+
 Each followed player has an **×** to stop following them. Removing one half of a doubles
 pair removes the partner too — otherwise their matches would keep appearing and the row
 could never be cleared.
@@ -122,6 +141,12 @@ rasterising the DOM, which would need a library — this repo has no build step 
 nothing from a CDN. Flags are fetched with `crossOrigin="anonymous"`; if BWF's image host
 ever stops sending the CORS header the flag is skipped rather than tainting the canvas
 and making the export impossible.
+
+The export also **traces each quarter-finalist's route** in its own colour, from where
+they entered the draw all the way to the quarter-final card. The coloured rail marks the
+half of every card that belongs to that player, so eight routes can cross the same
+column without ambiguity. There is no legend: the colours are for tracing a line with
+your eye, and each one ends at a card with the name on it.
 
 ### Selections
 
@@ -655,6 +680,18 @@ browser, which is a much bigger commitment.
   and a link naming a discipline still overrides the remembered one.
 - Dark BWF red is the default with `prefers-color-scheme: light` emulated, and the Mode
   button still flips both ways from there.
+- `surnameOf()` unit-tested against **all 416 entrants** in the five draws. 400 have
+  exactly one all-caps token; the rest are covered explicitly — compound surnames
+  (`Kelly VAN BUITEN` → VAN BUITEN, `Nour AHMED YOUSSRI`, `Serena AU YEONG`), initials
+  (`M.R. ARJUN` → ARJUN, `PUSARLA V. Sindhu` → PUSARLA), a disambiguator
+  (`VU Thi Trang (B)` → VU), and five fully-caps names with no case signal at all
+  (`THET HTAR THUZAR`, `CHEN ZHI YI`) which are kept whole rather than guessed at. Every
+  entrant yields a surname; average doubles card label drops from 30.8 to 14.7 characters.
+- Doubles byes exercised end-to-end on XD: all 16 carry their pair into round two, the
+  denominator excludes them (47 matches, not 63), a draw with byes fills to a champion,
+  and the cards are undimmed with the empty half reading *Bye*.
+- Zoom: a fresh discipline opens at 100%, re-clicking the discipline you are already on
+  keeps your zoom, tabbing away and back keeps it, and changing discipline resets it.
 - Bracket interaction driven with synthetic mouse events: a click opens the head-to-head,
   a drag pans without selecting text or opening the popup, a double-click selects
   nothing, and `F` reproduces the Fit button exactly.
