@@ -142,16 +142,23 @@ nothing from a CDN. Flags are fetched with `crossOrigin="anonymous"`; if BWF's i
 ever stops sending the CORS header the flag is skipped rather than tainting the canvas
 and making the export impossible.
 
-The export also **traces each quarter-finalist's route** in its own colour, from where
-they entered the draw all the way to the quarter-final card. At every step the player's
-**half of the card is boxed and tinted** — not just the connectors between cards — so the
-route is legible at the names themselves rather than only in the gaps. Since a highlight
-drawn over a card would sit on top of the name it is meant to pick out, the routes are
-indexed by cell and painted between each card's background and its text. There is no
-legend: the colours are for tracing a line with your eye, and each one ends at a card
-with the name on it.
+The export also **traces each of the four semi-finalists' routes** in its own colour, from
+where they entered the draw all the way to the semi-final card. At every step the
+player's **half of the card is boxed and tinted** — not just the connectors between cards
+— so the route is legible at the names themselves rather than only in the gaps. Since a
+highlight drawn over a card would sit on top of the name it is meant to pick out, the
+routes are indexed by cell and painted between each card's background and its text.
+There is no legend: the colours are for tracing a line with your eye, and each one ends
+at a card with the name on it.
 
-The trace walks *back* from the quarter-final card, asking at each column which feeder
+Four routes rather than eight is what makes the palette work. Blue `#1f7fd0`, green
+`#00a878`, orange `#e08a00` and purple `#c05fb4` sit roughly 90° apart, derive from
+[Okabe-Ito](https://jfly.uni-koeln.de/color/) so they stay distinguishable under every
+common form of colour blindness, and are mid-toned enough to read on the white surface
+and the dark one alike. All four also steer clear of the BWF red used by the W badges, so
+a route never reads as a badge.
+
+The trace walks *back* from the semi-final card, asking at each column which feeder
 produced the side being followed, so it never has to guess: the half it highlights is by
 construction the half that holds that player. A sheet filled in only part-way simply
 traces fewer routes.
@@ -700,7 +707,7 @@ browser, which is a much bigger commitment.
   and the cards are undimmed with the empty half reading *Bye*.
 - Zoom: a fresh discipline opens at 100%, re-clicking the discipline you are already on
   keeps your zoom, tabbing away and back keeps it, and changing discipline resets it.
-- Quarter-final routes: eight routes, eight distinct colours, each running QF → R64 with
+- Semi-final routes: four routes, four distinct colours, each running SF → R64 with
   exactly one cell per column, and every highlighted half verified to hold that player.
   Checked in both colour modes — the tints read on the white surface as well as the dark.
 - Bracket interaction driven with synthetic mouse events: a click opens the head-to-head,

@@ -2016,12 +2016,15 @@ function clearPicks() {
 const PNG_SCALE = 2;
 
 /**
- * One colour per quarter-finalist, for tracing their route back through the
- * draw on the exported sheet. Eight well-separated hues, all of which hold up
- * on the light background as well as the dark one.
+ * One colour per semi-finalist, for tracing their route back through the draw
+ * on the exported sheet. Only four routes are drawn, which is what makes this
+ * palette possible: blue / green / orange / purple sit roughly 90° apart on
+ * the wheel, are taken from Okabe-Ito (designed to stay distinguishable under
+ * every common form of colour blindness), and are mid-toned enough to read on
+ * the white surface and the dark one alike. All four are also kept clear of
+ * the BWF red the W badges use, so a route never reads as a badge.
  */
-const PATH_COLOURS = ['#e6194b','#f58231','#c99000','#3cb44b',
-                      '#159eb5','#4363d8','#8f2fb0','#dd3f9a'];
+const PATH_COLOURS = ['#1f7fd0', '#00a878', '#e08a00', '#c05fb4'];
 
 const flagPending = new Map();   // url -> Promise
 const flagReady = new Map();     // url -> HTMLImageElement | null (null = unusable)
@@ -2053,26 +2056,29 @@ function fitText(ctx, text, max) {
 }
 
 /**
- * The route each predicted quarter-finalist took to get there: walk back from
- * the quarter-final card, one column at a time, asking which feeder produced
- * the side we are following. Returns up to eight { colour, cells } chains,
- * each cell tagged with the half of the card that belongs to that player.
+ * The route each predicted semi-finalist took to get there: walk back from the
+ * semi-final card, one column at a time, asking which feeder produced the side
+ * we are following. Returns up to four { colour, cells } chains, each cell
+ * tagged with the half of the card that belongs to that player.
+ *
+ * The colour is taken before the empty check, so a slot keeps its colour
+ * whether or not the sheet has been filled in that far.
  */
-function quarterFinalPaths(draw, res) {
-  const qfCol = draw.maxCol - 2;                 // Final, Semi, Quarter
-  if (qfCol < 1) return [];
+function semiFinalPaths(draw, res) {
+  const sfCol = draw.maxCol - 1;                 // the column before the Final
+  if (sfCol < 1) return [];
   const paths = [];
   let n = 0;
-  for (let r = 0; r < cellsInCol(draw, qfCol); r++) {
-    const slot = res.teams[qfCol + '-' + r] || [null, null];
+  for (let r = 0; r < cellsInCol(draw, sfCol); r++) {
+    const slot = res.teams[sfCol + '-' + r] || [null, null];
     for (const side of [1, 2]) {
       const colour = PATH_COLOURS[n++ % PATH_COLOURS.length];
       const team = slot[side - 1];
       const key = entryKey(team);
       if (!key) continue;                        // nobody predicted this far yet
 
-      const cells = [{ c: qfCol, r, side }];
-      let c = qfCol, row = r, s = side;
+      const cells = [{ c: sfCol, r, side }];
+      let c = sfCol, row = r, s = side;
       while (c > 0) {
         row = 2 * row + (s - 1);                 // the feeder this side came out of
         c -= 1;
@@ -2210,11 +2216,11 @@ async function exportPredictionsPng(btn) {
       ctx.globalAlpha = 1;
     };
 
-    // --- quarter-final routes ---
+    // --- semi-final routes ---
     // Indexed by cell so the highlight can be painted between a card's
     // background and its text: a tint drawn afterwards would sit on top of the
     // names it is meant to pick out.
-    const routes = quarterFinalPaths(draw, res);
+    const routes = semiFinalPaths(draw, res);
     const routeAt = new Map();
     for (const p of routes) {
       for (const cell of p.cells) {
@@ -2249,7 +2255,7 @@ async function exportPredictionsPng(btn) {
         ctx.fillRect(x, y + BR.CARD_H / 2, BR.CARD_W, 1);     // split
         ctx.globalAlpha = 1;
 
-        // Box the half of the card that belongs to a quarter-finalist, so the
+        // Box the half of the card that belongs to a semi-finalist, so the
         // route is legible at the name itself and not only in the gaps.
         for (const hit of routeAt.get(k) || []) {
           const hy = y + (hit.side === 1 ? 0 : BR.CARD_H / 2);
