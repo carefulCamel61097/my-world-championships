@@ -143,10 +143,18 @@ ever stops sending the CORS header the flag is skipped rather than tainting the 
 and making the export impossible.
 
 The export also **traces each quarter-finalist's route** in its own colour, from where
-they entered the draw all the way to the quarter-final card. The coloured rail marks the
-half of every card that belongs to that player, so eight routes can cross the same
-column without ambiguity. There is no legend: the colours are for tracing a line with
-your eye, and each one ends at a card with the name on it.
+they entered the draw all the way to the quarter-final card. At every step the player's
+**half of the card is boxed and tinted** — not just the connectors between cards — so the
+route is legible at the names themselves rather than only in the gaps. Since a highlight
+drawn over a card would sit on top of the name it is meant to pick out, the routes are
+indexed by cell and painted between each card's background and its text. There is no
+legend: the colours are for tracing a line with your eye, and each one ends at a card
+with the name on it.
+
+The trace walks *back* from the quarter-final card, asking at each column which feeder
+produced the side being followed, so it never has to guess: the half it highlights is by
+construction the half that holds that player. A sheet filled in only part-way simply
+traces fewer routes.
 
 ### Selections
 
@@ -692,6 +700,9 @@ browser, which is a much bigger commitment.
   and the cards are undimmed with the empty half reading *Bye*.
 - Zoom: a fresh discipline opens at 100%, re-clicking the discipline you are already on
   keeps your zoom, tabbing away and back keeps it, and changing discipline resets it.
+- Quarter-final routes: eight routes, eight distinct colours, each running QF → R64 with
+  exactly one cell per column, and every highlighted half verified to hold that player.
+  Checked in both colour modes — the tints read on the white surface as well as the dark.
 - Bracket interaction driven with synthetic mouse events: a click opens the head-to-head,
   a drag pans without selecting text or opening the popup, a double-click selects
   nothing, and `F` reproduces the Fit button exactly.

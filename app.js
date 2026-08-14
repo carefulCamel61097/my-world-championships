@@ -2210,6 +2210,20 @@ async function exportPredictionsPng(btn) {
       ctx.globalAlpha = 1;
     };
 
+    // --- quarter-final routes ---
+    // Indexed by cell so the highlight can be painted between a card's
+    // background and its text: a tint drawn afterwards would sit on top of the
+    // names it is meant to pick out.
+    const routes = quarterFinalPaths(draw, res);
+    const routeAt = new Map();
+    for (const p of routes) {
+      for (const cell of p.cells) {
+        const k = cell.c + '-' + cell.r;
+        if (!routeAt.has(k)) routeAt.set(k, []);
+        routeAt.get(k).push({ side: cell.side, colour: p.colour });
+      }
+    }
+
     // --- cards ---
     for (let c = 0; c <= draw.maxCol; c++) {
       const n = cellsInCol(draw, c);
@@ -2235,6 +2249,20 @@ async function exportPredictionsPng(btn) {
         ctx.fillRect(x, y + BR.CARD_H / 2, BR.CARD_W, 1);     // split
         ctx.globalAlpha = 1;
 
+        // Box the half of the card that belongs to a quarter-finalist, so the
+        // route is legible at the name itself and not only in the gaps.
+        for (const hit of routeAt.get(k) || []) {
+          const hy = y + (hit.side === 1 ? 0 : BR.CARD_H / 2);
+          ctx.globalAlpha = 0.16;
+          ctx.fillStyle = hit.colour;
+          ctx.fillRect(x, hy, BR.CARD_W, BR.CARD_H / 2);
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = hit.colour;
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(x + 0.75, hy + 0.75, BR.CARD_W - 1.5, BR.CARD_H / 2 - 1.5);
+          ctx.fillRect(x, hy, 3, BR.CARD_H / 2);              // the rail, solid
+        }
+
         const seedOf = t => {
           if (c === 0) return t === t1 ? m.team1seed : m.team2seed;
           const e = draw.entries.get(entryKey(t));
@@ -2245,18 +2273,13 @@ async function exportPredictionsPng(btn) {
       }
     }
 
-    // --- quarter-final routes, over the cards so the rails read as tabs ---
-    for (const p of quarterFinalPaths(draw, res)) {
+    // --- the connectors joining each route's cards ---
+    for (const p of routes) {
       ctx.fillStyle = p.colour;
       for (const cell of p.cells) {
-        const x = ox + brLeft(cell.c);
-        const y = oy + brCentre(cell.c, cell.r) - BR.CARD_H / 2;
-        // Only the half of the card that belongs to this player.
-        ctx.fillRect(x, y + (cell.side === 1 ? 0 : BR.CARD_H / 2), 3, BR.CARD_H / 2);
-
         const to = p.cells.find(o => o.c === cell.c + 1);
         if (!to) continue;
-        const x0 = x + BR.CARD_W, xm = x0 + BR.CONN_W / 2;
+        const x0 = ox + brLeft(cell.c) + BR.CARD_W, xm = x0 + BR.CONN_W / 2;
         const y1 = oy + brCentre(cell.c, cell.r);
         const y2 = oy + brCentre(to.c, to.r);
         ctx.fillRect(x0, y1 - 1, BR.CONN_W / 2, 2);
