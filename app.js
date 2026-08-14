@@ -61,7 +61,31 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const REQ_GAP_MS = 320;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
-let queueTail = Promise.resolve();
+/**
+ * Two lanes, not one chain. Background work (ranking tables are paginated 15 at
+ * a time, so a full index is dozens of calls) would otherwise sit in front of
+ * whatever the user just clicked and leave the panel spinning for half a
+ * minute. Anything the visible view needs goes in the fast lane.
+ */
+const lanes = { high: [], low: [] };
+let laneBusy = false;
+
+function pumpLanes() {
+  if (laneBusy) return;
+  const job = lanes.high.shift() || lanes.low.shift();
+  if (!job) return;
+  laneBusy = true;
+  job.run().then(job.resolve, job.reject).finally(() => {
+    setTimeout(() => { laneBusy = false; pumpLanes(); }, REQ_GAP_MS);
+  });
+}
+
+function enqueue(run, priority) {
+  return new Promise((resolve, reject) => {
+    lanes[priority === 'low' ? 'low' : 'high'].push({ run, resolve, reject });
+    pumpLanes();
+  });
+}
 
 function cacheGet(key) {
   try {
@@ -82,7 +106,7 @@ function cacheSet(key, value) {
  * Serialised, cached GET. Retries once on an empty body (the shape a
  * rate-limit rejection takes here).
  */
-function getJSON(path, params) {
+function getJSON(path, params, priority) {
   const qs = new URLSearchParams(params || {}).toString();
   const url = `${API}/${path}${qs ? '?' + qs : ''}`;
   const key = 'wc26:' + url;
@@ -108,9 +132,7 @@ function getJSON(path, params) {
     throw new Error('No data from BWF for ' + path);
   };
 
-  const job = queueTail.then(run, run);
-  queueTail = job.then(() => sleep(REQ_GAP_MS), () => sleep(REQ_GAP_MS));
-  return job;
+  return enqueue(run, priority);
 }
 
 /* ============================ state ============================ */
@@ -270,12 +292,12 @@ function shortDay(iso) {
 
 /* ============================ draw loading ============================ */
 
-async function loadDraw(cat) {
+async function loadDraw(cat, priority) {
   if (state.draws[cat]) return state.draws[cat];
 
   const data = await getJSON('vue-tournament-draw-data', {
     tmtId: TMT.id, tmtType: 1, drawId: DRAW_ID[cat], isPara: 0,
-  });
+  }, priority);
 
   // The bracket grid and the flat match list describe the same 63 matches, but
   // only the flat list carries `id` (and later, times and scores). They join on
@@ -341,7 +363,7 @@ async function loadDay(date) {
   try {
     const list = await getJSON('tournaments/day-matches', {
       tournamentCode: TMT.code, date, order: 1, court: 0,
-    });
+    }, 'low');
     if (Array.isArray(list)) {
       for (const m of list) state.dayIndex[m.id] = m;
     }
@@ -506,7 +528,7 @@ async function loadRankIndex(cat) {
     try {
       d = await getJSON('vue-rankingtable', {
         rankId: 2, catId: RANK_CAT[cat], page, doubles: IS_DOUBLES[cat],
-      });
+      }, 'low');                                  // never ahead of the visible view
     } catch { break; }
 
     const res = d && d.results;
@@ -853,6 +875,13 @@ async function renderPlayerDetail() {
   // --- bracket path (local, no network) ---
   if (entry && state.draws[cat]) {
     renderPath(state.draws[cat], entry, $('#pathPanel'));
+    // Ordering the opponent chips by ranking needs this discipline's index.
+    // Fetch it only now, and only for the discipline actually on screen.
+    if (!state.ranks[cat]) {
+      loadRankIndex(cat)
+        .then(() => { if (state.active === rec.id && state.view === 'players') renderPlayerDetail(); })
+        .catch(() => { /* chips just stay in bracket order */ });
+    }
   } else {
     $('#pathPanel').querySelector('.panel-body').textContent =
       'Draw not loaded for this discipline yet.';
@@ -860,8 +889,10 @@ async function renderPlayerDetail() {
 
   // --- profile numbers (network, best-effort) ---
   const want = rec.id;
+  const partner = entry && (entry.players || [])
+    .map(p => String(p.id)).find(pid => pid !== String(rec.id));
   try {
-    const bundle = await playerBundle(rec.id, cat);
+    const bundle = await playerBundle(rec.id, cat, partner);
     if (state.active !== want) return;              // user moved on while loading
     renderStatCells(bundle, entry);
     const box = $('#seasonBox');
@@ -872,7 +903,7 @@ async function renderPlayerDetail() {
   }
 }
 
-function playerBundle(id, cat) {
+function playerBundle(id, cat, partnerId) {
   // Key by discipline as well as player: rankings are per-event, and the first
   // render can happen before the draw has loaded (discipline still unknown).
   // Keying on id alone would cache that early wrong-event answer for good.
@@ -880,7 +911,7 @@ function playerBundle(id, cat) {
   // Cache the *promise*, not the result: re-renders fire while the first
   // request is still in flight, and we must not queue it twice.
   if (!state.playerCache[key]) {
-    state.playerCache[key] = fetchPlayerBundle(id, cat).catch(e => {
+    state.playerCache[key] = fetchPlayerBundle(id, cat, partnerId).catch(e => {
       delete state.playerCache[key];   // let a later render retry
       throw e;
     });
@@ -888,17 +919,41 @@ function playerBundle(id, cat) {
   return state.playerCache[key];
 }
 
-async function fetchPlayerBundle(id, cat) {
+/** BWF returns "-" (or a "-" rank) when it has no ranking for that player. */
+function blankRank(v) {
+  if (v == null || v === '-' || v === '') return true;
+  return typeof v === 'object' && (v.rank == null || v.rank === '-');
+}
+
+async function fetchPlayerBundle(id, cat, partnerId) {
   // Rankings are per discipline. Until the draw tells us which one this player
   // is in, ask only for the discipline-independent data.
   const rankEvent = RANK_CAT[cat];
-  const [summary, current, highest, previous, season] = await Promise.all([
+  const askRank = who => rankEvent
+    ? getJSON('vue-player-ranking-current', { playerId: who, isPara: 0, rankingEvent: rankEvent }).catch(() => null)
+    : Promise.resolve(null);
+  const askHighest = who => rankEvent
+    ? getJSON('vue-player-ranking-highest', { playerId: who, isPara: 0, rankingEvent: rankEvent }).catch(() => null)
+    : Promise.resolve(null);
+
+  let [summary, current, highest, previous, season] = await Promise.all([
     getJSON('vue-player-summary', { playerId: id, isPara: 0, drawCount: 5 }).catch(() => null),
-    rankEvent ? getJSON('vue-player-ranking-current', { playerId: id, isPara: 0, rankingEvent: rankEvent }).catch(() => null) : null,
-    rankEvent ? getJSON('vue-player-ranking-highest', { playerId: id, isPara: 0, rankingEvent: rankEvent }).catch(() => null) : null,
+    askRank(id),
+    askHighest(id),
     getJSON('vue-player-match-previous', { playerId: id, isPara: 0, drawCount: 5, activeTab: 0 }).catch(() => null),
     loadSeason(id).catch(() => []),
   ]);
+
+  // A doubles ranking belongs to the pair, and BWF only resolves it against
+  // whichever half it stores as player1 — the man in mixed doubles, and the
+  // first-named player in level doubles. Asking with the other half returns
+  // "-", which is why the second-named player showed no ranking at all. Retry
+  // with the partner and report the pair's figures for both of them.
+  if (partnerId && blankRank(current && current.results)) {
+    const [c2, h2] = await Promise.all([askRank(partnerId), askHighest(partnerId)]);
+    if (!blankRank(c2 && c2.results)) current = c2;
+    if (!blankRank(h2 && h2.results)) highest = h2;
+  }
 
   return {
     summary: summary && summary.results,
@@ -911,12 +966,16 @@ async function fetchPlayerBundle(id, cat) {
 
 function renderStatCells(b, entry) {
   const cells = [];
+  // A doubles ranking is the pair's, not the individual's — say so.
+  const isPair = !!(entry && entry.players && entry.players.length > 1);
+  const suffix = isPair ? ' &middot; pair' : '';
+
   const rank = (b.rank && b.rank !== '-') ? b.rank : null;
-  cells.push(`<div class="stat-cell"><div class="k">BWF World Ranking</div>
+  cells.push(`<div class="stat-cell"><div class="k">BWF World Ranking${suffix}</div>
     <div class="v">${rank ? '#' + esc(rank) : '<small>&mdash;</small>'}</div></div>`);
 
   if (b.highest && b.highest.rank && b.highest.rank !== '-') {
-    cells.push(`<div class="stat-cell"><div class="k">Career high</div>
+    cells.push(`<div class="stat-cell"><div class="k">Career high${suffix}</div>
       <div class="v">#${esc(b.highest.rank)} <small>${esc(b.highest.date || '')}</small></div></div>`);
   }
   if (entry && entry.seed) {
@@ -1978,9 +2037,9 @@ async function ensureCats() {
       return;
     }
   }
-  for (const c of activeCats()) {
-    loadRankIndex(c).catch(() => { /* opponents just stay in bracket order */ });
-  }
+  // Ranking indexes are deliberately NOT loaded here. They only order the
+  // opponent chips, cost dozens of paginated calls per discipline, and are
+  // fetched on demand for whichever player is actually on screen.
 }
 
 /** Cycle views / disciplines / highlighted player from the keyboard. */
@@ -2172,7 +2231,7 @@ async function init() {
     // players resolve everywhere and makes toggling one back on instant.
     for (const c of CATS) {
       if (state.draws[c]) continue;
-      try { await loadDraw(c); renderAll(); } catch { /* keep going */ }
+      try { await loadDraw(c, 'low'); renderAll(); } catch { /* keep going */ }
     }
     // Then scheduling data: times, courts and scores, once BWF publishes them.
     await loadAllDays(() => { if (state.view === 'schedule') renderSchedule(); })

@@ -413,6 +413,12 @@ GET /api/vue-player-match-next   … also: -bio, -gallery, -tournaments, -rankin
   discipline — so never call them before you know which draw the player is in, and
   never cache the answer under the player id alone.
 
+⚠️ **A doubles ranking only resolves against `player1_id` of the pair.** Asking with the
+other half returns `"-"`, not the pair's rank. In mixed doubles BWF stores the man as
+`player1`, so every woman showed no ranking at all; in level doubles it hits whichever
+player is named second. `app.js` retries with the partner's id and labels the figure
+"· pair", since the ranking belongs to the partnership rather than the person.
+
 ⚠️ `/api/h2h/statistics` **requires both sides** — calling it with only `t1p1` returns
 HTTP 500. Use it for head-to-heads, not for single-player profiles. It returns
 `stats` (`totalWins` / `totalLosses` / `totalMatches`), `matches[]`
@@ -525,7 +531,7 @@ GitHub Pages (static)
       ├── localStorage                              (followed players, saved
       │                                              selections, ranks, skin, mode)
       ├── sessionStorage                            (5-minute response cache)
-      └── serialised request queue, ~320 ms apart   (be polite to BWF)
+      └── two-lane request queue, ~320 ms apart     (be polite to BWF)
 ```
 
 - **No backend, no build step, no API keys, no secrets.**
@@ -537,6 +543,13 @@ GitHub Pages (static)
   merges scheduling data in the background as each day arrives. This is why the tool is
   fully usable *before* the order of play exists.
 - In-flight requests are de-duplicated by caching the *promise*, not the result.
+- **Requests run in two lanes, not one chain.** Everything the visible view needs (draws,
+  player profiles, head-to-heads) goes in the fast lane; bulk background work (ranking
+  tables, day schedules, draws for switched-off disciplines) goes in the slow one. A
+  single chain meant a ranking index — paginated 15 rows at a time, so dozens of calls per
+  discipline — could sit in front of whatever the user had just clicked and leave the
+  panel spinning. Ranking indexes are also fetched only for the discipline actually on
+  screen, not for all five up front.
 
 **No scraped-cache fallback.** The obvious fallback — a GitHub Actions cron job that
 fetches JSON and commits it — **does not work**: Cloudflare blocks non-browser clients
