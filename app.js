@@ -2056,10 +2056,14 @@ function fitText(ctx, text, max) {
 }
 
 /**
- * The route each predicted semi-finalist took to get there: walk back from the
- * semi-final card, one column at a time, asking which feeder produced the side
- * we are following. Returns up to four { colour, cells } chains, each cell
- * tagged with the half of the card that belongs to that player.
+ * The full route of each predicted semi-finalist: walk back from the
+ * semi-final card asking at each column which feeder produced the side we are
+ * following, then walk forward again for as long as they keep winning. So a
+ * beaten semi-finalist's route stops at the semi-final, a beaten finalist's
+ * runs one card further, and the champion's runs the length of the draw.
+ *
+ * Returns up to four { colour, champion, cells } chains, each cell tagged with
+ * the half of the card that belongs to that player.
  *
  * The colour is taken before the empty check, so a slot keeps its colour
  * whether or not the sheet has been filled in that far.
@@ -2086,7 +2090,24 @@ function semiFinalPaths(draw, res) {
         s = entryKey(feeder[0]) === key ? 1 : 2;
         cells.push({ c, r: row, side: s });
       }
-      paths.push({ colour, cells });
+
+      // Forward, for as long as they keep winning. A match at (c, r) feeds
+      // (c+1, r/2), landing on the top half from an even row and the bottom
+      // half from an odd one.
+      let fc = sfCol, fr = r;
+      while (fc < draw.maxCol) {
+        const won = res.winner[fc + '-' + fr];
+        if (!won || entryKey(won) !== key) break;
+        const nextSide = fr % 2 === 0 ? 1 : 2;
+        fc += 1;
+        fr = Math.floor(fr / 2);
+        cells.unshift({ c: fc, r: fr, side: nextSide });
+      }
+      // Winning the Final is the one step with no card of its own — it lands
+      // on the champion cell, which is drawn separately.
+      const champion = entryKey(res.winner[draw.maxCol + '-0']) === key;
+
+      paths.push({ colour, champion, cells });
     }
   }
   return paths;
@@ -2292,15 +2313,32 @@ async function exportPredictionsPng(btn) {
         ctx.fillRect(xm - 1, Math.min(y1, y2), 2, Math.max(2, Math.abs(y2 - y1)));
         ctx.fillRect(xm, y2 - 1, BR.CONN_W / 2, 2);
       }
+      // The Final feeds the champion cell down a straight run, not an elbow.
+      if (p.champion) {
+        const x0 = ox + brLeft(draw.maxCol) + BR.CARD_W;
+        ctx.fillRect(x0, oy + brCentre(draw.maxCol, 0) - 1, BR.CONN_W, 2);
+      }
     }
 
     // --- champion ---
+    // Carries the winner's route colour, so the trace runs unbroken from the
+    // round they entered right through to the trophy.
+    const winnerRoute = routes.find(p => p.champion);
+    const champColour = winnerRoute ? winnerRoute.colour : C.accent;
     const cx0 = ox + brLeft(cols), cy0 = oy + brCentre(draw.maxCol, 0) - BR.CARD_H / 2;
     ctx.fillStyle = C.surface;
     ctx.fillRect(cx0, cy0, BR.CARD_W, BR.CARD_H);
-    ctx.strokeStyle = C.accent;
+    if (winnerRoute) {
+      ctx.globalAlpha = 0.16;
+      ctx.fillStyle = champColour;
+      ctx.fillRect(cx0, cy0, BR.CARD_W, BR.CARD_H);
+      ctx.globalAlpha = 1;
+    }
+    ctx.strokeStyle = champColour;
     ctx.lineWidth = 1.5;
     ctx.strokeRect(cx0 + 0.75, cy0 + 0.75, BR.CARD_W - 1.5, BR.CARD_H - 1.5);
+    ctx.fillStyle = champColour;
+    ctx.fillRect(cx0, cy0, 3, BR.CARD_H);                     // the rail
     ctx.fillStyle = C.muted;
     ctx.font = `700 9px ${font}`;
     ctx.fillText('CHAMPION', cx0 + 12, cy0 + 19);

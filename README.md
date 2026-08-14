@@ -142,14 +142,17 @@ nothing from a CDN. Flags are fetched with `crossOrigin="anonymous"`; if BWF's i
 ever stops sending the CORS header the flag is skipped rather than tainting the canvas
 and making the export impossible.
 
-The export also **traces each of the four semi-finalists' routes** in its own colour, from
-where they entered the draw all the way to the semi-final card. At every step the
-player's **half of the card is boxed and tinted** — not just the connectors between cards
-— so the route is legible at the names themselves rather than only in the gaps. Since a
-highlight drawn over a card would sit on top of the name it is meant to pick out, the
-routes are indexed by cell and painted between each card's background and its text.
-There is no legend: the colours are for tracing a line with your eye, and each one ends
-at a card with the name on it.
+The export also **traces each of the four semi-finalists' routes** in its own colour,
+from where they entered the draw through to **the last round that player actually
+reaches**: a beaten semi-finalist's route stops at the semi-final, a beaten finalist's
+runs one card further, and the champion's runs the length of the draw and finishes on
+the champion cell, which takes the winner's colour rather than the usual accent. At
+every step the player's **half of the card is boxed and tinted** — not just the
+connectors between cards — so the route is legible at the names themselves rather than
+only in the gaps. Since a highlight drawn over a card would sit on top of the name it is
+meant to pick out, the routes are indexed by cell and painted between each card's
+background and its text. There is no legend: the colours are for tracing a line with
+your eye, and each one ends at a card with the name on it.
 
 Four routes rather than eight is what makes the palette work. Blue `#1f7fd0`, green
 `#00a878`, orange `#e08a00` and purple `#c05fb4` sit roughly 90° apart, derive from
@@ -159,7 +162,8 @@ and the dark one alike. All four also steer clear of the BWF red used by the W b
 a route never reads as a badge.
 
 The trace walks *back* from the semi-final card, asking at each column which feeder
-produced the side being followed, so it never has to guess: the half it highlights is by
+produced the side being followed, then walks *forward* again for as long as that player
+keeps winning. Neither direction has to guess, so the half it highlights is by
 construction the half that holds that player. A sheet filled in only part-way simply
 traces fewer routes.
 
@@ -707,8 +711,11 @@ browser, which is a much bigger commitment.
   and the cards are undimmed with the empty half reading *Bye*.
 - Zoom: a fresh discipline opens at 100%, re-clicking the discipline you are already on
   keeps your zoom, tabbing away and back keeps it, and changing discipline resets it.
-- Semi-final routes: four routes, four distinct colours, each running SF → R64 with
-  exactly one cell per column, and every highlighted half verified to hold that player.
+- Semi-final routes: four routes, four distinct colours, each contiguous with exactly one
+  cell per column down to the entry round, and every highlighted half verified to hold
+  that player. The forward extension is checked against reality too — both finalists carry
+  on to the Final card, the two beaten semi-finalists stop at the semi-final, no route
+  runs past where that player actually got, and exactly one is flagged as the champion.
   Checked in both colour modes — the tints read on the white surface as well as the dark.
 - Bracket interaction driven with synthetic mouse events: a click opens the head-to-head,
   a drag pans without selecting text or opening the popup, a double-click selects
