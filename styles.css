@@ -440,6 +440,37 @@ a { color: var(--accent-text); }
 .daygroup-head h3 { font-size: 15px; text-transform: uppercase; letter-spacing: .8px; }
 .daygroup-head span { font-size: 12.5px; color: var(--text-muted); }
 
+/* ---- order of play, one column per court ----
+   The row is the court's running order, not a clock: matches follow one
+   another, so row 3 means "third on this court". Below the breakpoint the grid
+   is dropped entirely and the cards stack in the DOM order they were emitted
+   in, which is row-major — i.e. down the day. */
+.oop-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr));
+  gap: 8px; align-items: start;
+}
+.oop-head {
+  position: sticky; top: 0; z-index: 2;
+  padding: 5px 10px; margin-bottom: 2px;
+  background: var(--surface-sunk);
+  border: 1px solid var(--border-soft);
+  border-bottom: 2px solid var(--accent);
+  border-radius: var(--radius-btn) var(--radius-btn) 0 0;
+  font-size: 11.5px; font-weight: 700; letter-spacing: .6px;
+  text-transform: uppercase; color: var(--text-dim);
+}
+.oop-grid .match { margin-bottom: 0; }
+/* The column already names the court. */
+.oop-grid .match-head .court { display: none; }
+
+@media (max-width: 899px) {
+  .oop-grid { display: block; }
+  .oop-head { display: none; }
+  .oop-grid .match { margin-bottom: 6px; }
+  .oop-grid .match-head .court { display: inline; }
+}
+
 /* match card — BWF reading order: flag, seed, name, per-game scores */
 .match {
   position: relative;
@@ -448,16 +479,16 @@ a { color: var(--accent-text); }
   border-left: var(--card-accent-w) solid var(--accent);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow);
-  margin-bottom: 9px; overflow: hidden;
+  margin-bottom: 6px; overflow: hidden;
 }
 :root[data-skin="sport"] .match { border-left: 1px solid var(--border-soft); }
 :root[data-skin="sport"] .match.is-live { border-color: var(--live); }
 
 .match-head {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 7px 14px; background: var(--surface-sunk);
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  padding: 3px 11px; background: var(--surface-sunk);
   border-bottom: 1px solid var(--border-soft);
-  font-size: 11.5px; letter-spacing: .5px; text-transform: uppercase; color: var(--text-muted);
+  font-size: 11px; letter-spacing: .4px; text-transform: uppercase; color: var(--text-muted);
 }
 .match-head .rnd { font-weight: 700; color: var(--accent-text); }
 .match-head .sep { opacity: .45; }
@@ -466,32 +497,37 @@ a { color: var(--accent-text); }
 .stat.live { color: var(--live); }
 .stat.upcoming { color: var(--warn); }
 
-.match-body { padding: 4px 0; }
+.match-body { padding: 0; }
 .side {
   display: grid;
-  grid-template-columns: 22px 26px 1fr auto;
-  align-items: center; gap: 10px;
-  padding: 7px 14px;
+  grid-template-columns: 19px 24px 1fr auto;
+  align-items: center; gap: 8px;
+  padding: 4px 11px;
 }
 .side + .side { border-top: 1px solid var(--border-soft); }
 .side.is-loser .nm, .side.is-loser .sets { opacity: .55; }
 .side.is-winner .nm { font-weight: 700; }
-.flag { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; background: var(--surface-2); }
+.flag { width: 19px; height: 19px; border-radius: 50%; object-fit: cover; background: var(--surface-2); }
 .seed { font-size: 11px; color: var(--text-muted); text-align: center; font-weight: 700; }
-.nm { min-width: 0; font-size: 14.5px; }
-.nm .sub { display: block; font-size: 11.5px; color: var(--text-muted); }
+/* Deliberately allowed to wrap. In a four-column court grid a doubles pair is
+   wider than the column, and wrapping to a second line costs a few pixels
+   whereas an ellipsis would hide half the pair. */
+.nm { min-width: 0; font-size: 13.5px; line-height: 1.25; }
+/* The country rode on its own line under the name, costing a whole line per
+   side for something the flag beside it already says. Inline instead. */
+.nm .sub { font-size: 11px; color: var(--text-muted); margin-left: 5px; }
 .nm .mine { color: var(--accent-text); }
-.sets { display: flex; gap: 4px; }
+.sets { display: flex; gap: 3px; }
 .sets b {
-  min-width: 27px; text-align: center; font-size: 14px; font-weight: 700;
-  padding: 2px 4px; border-radius: 2px; background: var(--surface-2); color: var(--text-dim);
+  min-width: 24px; text-align: center; font-size: 13px; font-weight: 700;
+  padding: 1px 3px; border-radius: 2px; background: var(--surface-2); color: var(--text-dim);
 }
 .sets b.won { background: var(--accent); color: var(--accent-fg); }
 :root[data-skin="sport"] .sets b.won { background: var(--accent); color: var(--accent-fg); }
 
 .match-foot {
-  padding: 6px 14px; font-size: 12px; color: var(--text-muted);
-  border-top: 1px solid var(--border-soft); display: flex; gap: 10px; flex-wrap: wrap;
+  padding: 3px 11px; font-size: 11.5px; color: var(--text-muted);
+  border-top: 1px solid var(--border-soft); display: flex; gap: 8px; flex-wrap: wrap;
 }
 .match-foot .local { color: var(--accent-text); font-weight: 600; }
 

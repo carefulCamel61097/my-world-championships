@@ -62,7 +62,8 @@ choice persists and travels in the URL (`c=all`, or `c=ms,wd`).
 
 1. **Schedule** — the followed players' matches only, across every switched-on
    discipline, grouped by day, with venue time, your local time, court, round, per-game
-   scores and duration. A day bar filters to one day or shows all.
+   scores and duration. A day bar filters to one day or shows all. Once a day's order of
+   play is out it is laid out **as a court grid** — see below.
 2. **Players** — the follow list on the left, filtered to the switched-on disciplines;
    the highlighted player's detail on the
    right: photo, country, seed, BWF world ranking, career-high ranking, age, and the
@@ -100,6 +101,43 @@ were looking.
 Each followed player has an **×** to stop following them. Removing one half of a doubles
 pair removes the partner too — otherwise their matches would keep appearing and the row
 could never be cleared.
+
+### The order of play, and why the y-axis is not a clock
+
+Once BWF publishes a day's order of play, that day is laid out as a grid: **one column
+per court, one row per position in that court's running order**. Row 3 means "third on
+this court".
+
+It is tempting to put the y-axis on a clock instead, and the data appears to support it —
+every match carries a `matchTime`. It does not survive contact with the real feed:
+
+```
+Court 1  09:00 09:50 10:40 11:30 12:20 13:10 14:00 14:50 15:40 16:30 17:20 …
+Court 3  09:10 10:00 10:50 11:40 12:30 13:20 14:10 13:40 14:30 15:20 16:10 …
+                                                    ↑ goes backwards
+```
+
+Those times are a flat 50-minute estimate stamped on every match, and on the courts with
+an evening session they are **not even monotonic** — court 3's eighth match is timed
+half an hour *before* its seventh. BWF says as much itself: only the first match on each
+court has a real time (`oopText: "Starting at 9:00 AM"`), and everything after it reads
+**`"Followed by"`**. Badminton matches follow one another; they do not start at a clock
+time. A time axis would have to draw court 3's eighth match above its seventh.
+
+So the running order is the axis, and it is honest as well as convenient: all four courts
+run 16 matches starting within ten minutes of each other, so a row lines up across
+columns anyway. Rows with nothing to show are skipped, which means filtering to a handful
+of followed players gives a dense grid rather than sixteen mostly-empty rows — while two
+cards on the same row are still genuinely at the same point in the day.
+
+Follow-on times are shown but marked **≈**, with the reason on hover, rather than
+presenting a fabricated time as fact. All times are 24-hour, including BWF's own strings
+(`"Starting at 9:00 AM"` is restyled to `09:00`) — a venue time of `09:00` next to a local
+time of `6:10 PM` is two clocks in one card.
+
+Below 900px the grid is dropped entirely and the cards stack. Nothing switches on a
+resize listener: the cards are emitted row-major, so the same DOM reads down the day when
+the grid is off, and the card shows its court name again once the column headers go.
 
 ### Predictions
 
@@ -401,7 +439,12 @@ A match object contains essentially everything the tool needs:
 }
 ```
 
-> ⚠️ As of **14 Aug 2026** `day-matches` returns `[]` for all WC2026 dates — the order of
+> ✅ **Update, 16 Aug 2026:** the order of play is publishing. `day-matches` now returns
+> 64 matches for 2026-08-17 across 4 courts (16 each); 18 Aug onward is still `[]`, so
+> BWF releases it a day or two ahead rather than all at once. The court grid, times,
+> `oopText` and the merge path are all confirmed against this live data.
+>
+> ⚠️ Superseded — as of **14 Aug 2026** `day-matches` returned `[]` for all WC2026 dates — the order of
 > play is not published yet (BWF typically publishes it 1–2 days ahead). The endpoint is
 > confirmed working against the 2025 Indonesia Open. Re-check from ~16 Aug.
 
@@ -699,6 +742,18 @@ browser, which is a much bigger commitment.
   and a link naming a discipline still overrides the remembered one.
 - Dark BWF red is the default with `prefers-color-scheme: light` emulated, and the Mode
   button still flips both ways from there.
+- Court grid checked against the live day-one order of play: 4 columns in court order,
+  all 64 matches placed, 16 rows, 16 per column, and one card per court on a row. The
+  premise is asserted directly — BWF's times really are non-monotonic on two of the four
+  courts, `courtSeq` is a clean 0–15 on every court, and only the first match of a court
+  carries a real start time. Filtering collapses the rows (8 matches → 6 contiguous rows,
+  not 16 sparse ones). Below 900px the grid becomes a block, headers hide, the court name
+  returns to the card, and the cards still read top to bottom in running order.
+- Card height measured, not eyeballed: **160px → 106px**, with head, both sides and foot
+  all still present and no name clipped horizontally (checked over 64 doubles pairs,
+  which are the ones at risk in a quarter-width column).
+- No 12-hour times survive anywhere in the cards, including BWF's own `oopText`; follow-on
+  times are marked ≈ and the first match on a court is not.
 - `surnameOf()` unit-tested against **all 416 entrants** in the five draws. 400 have
   exactly one all-caps token; the rest are covered explicitly — compound surnames
   (`Kelly VAN BUITEN` → VAN BUITEN, `Nour AHMED YOUSSRI`, `Serena AU YEONG`), initials

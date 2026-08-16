@@ -318,10 +318,22 @@ function venueTime(m) {
   return t ? t.slice(0, 5) : null;
 }
 
+/**
+ * Always 24-hour. Venue times arrive from BWF as "HH:MM" already, so a local
+ * time rendered as "6:10 PM" beside one would be two clocks in one card.
+ * hourCycle h23 rather than hour12:false, which can render midnight as 24:00.
+ */
 function localTime(m) {
   const d = utcDate(m);
   if (!d) return null;
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+}
+
+/** BWF writes its own strings in 12-hour ("Starting at 9:00 AM"). Restyle them. */
+function to24h(text) {
+  return String(text == null ? '' : text).replace(
+    /\b(\d{1,2}):(\d{2})\s*([AaPp])\.?\s*[Mm]\.?/g,
+    (_, h, min, ap) => String((Number(h) % 12) + (/[Pp]/.test(ap) ? 12 : 0)).padStart(2, '0') + ':' + min);
 }
 
 function dayKeyOf(m) {
@@ -417,7 +429,18 @@ async function loadDay(date) {
       tournamentCode: TMT.code, date, order: 1, court: 0,
     }, 'low');
     if (Array.isArray(list)) {
-      for (const m of list) state.dayIndex[m.id] = m;
+      // The array order IS the order of play. Do not trust matchTime for
+      // sequence: BWF spaces the estimates a flat 50 minutes apart and they are
+      // not even monotonic — on a court with an evening session the times run
+      // backwards (…14:10, 13:40…). Only the first match of a court has a real
+      // time; the rest carry oopText "Followed by".
+      const seen = new Map();                  // court -> how many so far
+      list.forEach((m, i) => {
+        const court = m.courtName || '';
+        const seq = seen.get(court) || 0;
+        seen.set(court, seq + 1);
+        state.dayIndex[m.id] = Object.assign({}, m, { oopIndex: i, courtSeq: seq });
+      });
     }
   } catch {
     state.daysLoaded.delete(date);   // allow a later retry
@@ -674,15 +697,23 @@ function matchCard(m, opts) {
   const head = [
     hideRound ? '' : `<span class="rnd">${esc(ROUND_LABEL[m.roundName] || m.roundName || '')}</span>`,
     m.eventName ? `${hideRound ? '' : '<span class="sep">&middot;</span>'}<span>${esc(m.eventName)}</span>` : '',
-    m.courtName ? `<span class="sep">&middot;</span><span>${esc(m.courtName)}</span>` : '',
+    m.courtName ? `<span class="sep court">&middot;</span><span class="court">${esc(m.courtName)}</span>` : '',
     `<span class="stat ${st.cls}">${st.text}</span>`,
   ].join('');
 
+  // Only the first match on a court has a real start time. Everything after it
+  // is "Followed by", and BWF's clock for those is a flat 50-minute estimate
+  // that on some courts even runs backwards — so mark them as approximate
+  // rather than presenting a fabricated time as fact.
+  const est = m.oopText && !/^\s*starting/i.test(m.oopText);
+  const tip = est ? ' title="Estimated — this match follows the one before it on court"' : '';
+  const approx = est ? '&asymp;' : '';
+
   const foot = [
-    vt ? `<span>Venue ${esc(vt)}</span>` : '<span>Time to be confirmed</span>',
-    showLocal ? `<span class="local">Your time ${esc(lt)}</span>` : '',
+    vt ? `<span${tip}>${approx}Venue ${esc(vt)}</span>` : '<span>Time to be confirmed</span>',
+    showLocal ? `<span class="local"${tip}>${approx}Your time ${esc(lt)}</span>` : '',
     m.duration ? `<span>${esc(m.duration)} min</span>` : '',
-    m.oopText ? `<span>${esc(m.oopText)}</span>` : '',
+    m.oopText ? `<span>${esc(to24h(m.oopText))}</span>` : '',
   ].filter(Boolean).join('');
 
   const card = el('div', 'match' + (st.cls === 'live' ? ' is-live' : ''));
@@ -705,6 +736,64 @@ function matchCard(m, opts) {
 }
 
 /* ============================ view: schedule ============================ */
+
+/** "Court 10" after "Court 2", not before it. */
+function courtNum(name) {
+  const n = parseInt(String(name).replace(/\D+/g, ''), 10);
+  return Number.isFinite(n) ? n : 9999;
+}
+
+/**
+ * A day's order of play as a grid: one column per court, one row per position
+ * in that court's running order.
+ *
+ * The y-axis is the running order, not the clock. Badminton matches follow one
+ * another on a court — BWF says so itself, with oopText "Followed by" on every
+ * match after the first — and the per-match times it publishes are flat
+ * 50-minute estimates that on some courts run backwards. So row 3 means "third
+ * on this court", which is both true and the way an order of play is read.
+ *
+ * Rows with nothing to show are skipped, so filtering to a handful of followed
+ * players gives a dense grid rather than sixteen mostly-empty rows — while two
+ * matches on the same row are still genuinely at the same point in the day.
+ */
+function renderCourtGrid(list, into) {
+  const placed = list.filter(m => m.courtName && m.courtSeq != null);
+  if (placed.length !== list.length) return false;      // OOP not out for this day
+
+  const courts = Array.from(new Set(placed.map(m => m.courtName)))
+    .sort((a, b) => courtNum(a) - courtNum(b));
+  if (courts.length < 2) return false;                  // one column is just a list
+
+  const colOf = new Map(courts.map((c, i) => [c, i]));
+  const rows = Array.from(new Set(placed.map(m => m.courtSeq))).sort((a, b) => a - b);
+  const rowOf = new Map(rows.map((s, i) => [s, i]));
+
+  const grid = el('div', 'oop-grid');
+  grid.style.setProperty('--cols', courts.length);
+
+  for (const c of courts) {
+    const h = el('div', 'oop-head', esc(c));
+    h.style.gridColumn = colOf.get(c) + 1;
+    h.style.gridRow = 1;
+    grid.appendChild(h);
+  }
+
+  // Row-major DOM order, so the narrow-screen fallback — which drops the grid
+  // and simply stacks these — still reads down the day in running order.
+  const ordered = placed.slice().sort((a, b) =>
+    (a.courtSeq - b.courtSeq) || (colOf.get(a.courtName) - colOf.get(b.courtName)));
+
+  for (const m of ordered) {
+    const card = matchCard(m);
+    card.style.gridColumn = colOf.get(m.courtName) + 1;
+    card.style.gridRow = rowOf.get(m.courtSeq) + 2;     // row 1 is the court header
+    grid.appendChild(card);
+  }
+
+  into.appendChild(grid);
+  return true;
+}
 
 function renderDaybar() {
   const bar = $('#daybar');
@@ -799,7 +888,11 @@ function renderSchedule() {
       ? `<h3>Not yet scheduled</h3><span>${list.length} match${list.length === 1 ? '' : 'es'} &middot; times published nearer the day</span>`
       : `<h3>${esc(prettyDay(k))}</h3><span>${list.length} match${list.length === 1 ? '' : 'es'}</span>`;
     g.appendChild(head);
-    for (const m of list) g.appendChild(matchCard(m));
+    // Once the order of play is out, lay the day out by court; until then a
+    // plain chronological list is all the data supports.
+    if (k === 'tbc' || !renderCourtGrid(list, g)) {
+      for (const m of list) g.appendChild(matchCard(m));
+    }
     wrap.appendChild(g);
   }
 }
