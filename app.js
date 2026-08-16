@@ -365,6 +365,25 @@ function dayKeyOf(m) {
   return null;
 }
 
+/**
+ * Today as YYYY-MM-DD in the *viewer's* timezone.
+ *
+ * Deliberately not toISOString().slice(0,10), which is UTC: for anyone east of
+ * Greenwich that still reads as yesterday between local midnight and UTC
+ * midnight — so in central Europe the tool would open on the wrong day every
+ * night until 02:00, which is exactly when you would be looking ahead to it.
+ */
+function todayIso(d = new Date()) {
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** The tournament day being played today, or null outside the week. */
+function currentTmtDay() {
+  const t = todayIso();
+  return TMT.dates.includes(t) ? t : null;
+}
+
 function prettyDay(iso) {
   const d = new Date(iso + 'T12:00:00Z');
   return d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
@@ -3367,10 +3386,15 @@ async function init() {
 
   // --- starred matches ---
   state.starred = new Set((store.read('starred', []) || []).map(String));
-  // Land on today during the tournament, on day one before it starts. Reading
-  // a whole week of fixtures at once is not what this view is for.
-  const today = new Date().toISOString().slice(0, 10);
-  state.matchDay = TMT.dates.includes(today) ? today : TMT.dates[0];
+
+  // Both day bars land on today once the tournament is on. Follow Matches has
+  // to pick *some* day either way — reading a whole week of fixtures at once is
+  // not what it is for — so outside the week it opens on day one. The player
+  // schedule is short enough to be worth seeing whole, so it falls back to
+  // "All days" instead.
+  const today = currentTmtDay();
+  state.matchDay = today || TMT.dates[0];
+  state.day = today || 'all';
   $('#starredOnly').checked = state.starredOnly;
   $('#starredOnly').onchange = e => { state.starredOnly = e.target.checked; renderMatches(); };
   $('#clearStars').onclick = clearStars;

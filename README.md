@@ -97,8 +97,15 @@ both in one list, which is the point of a personal schedule. **All** turns every
 on; the last remaining discipline cannot be switched off, so the page is never empty. The
 choice persists and travels in the URL (`c=all`, or `c=ms,wd`).
 
-**Follow Matches** shows one day at a time — it opens on today during the tournament and
-on day one before it — with every match of the switched-on disciplines laid out by court
+**Both day bars land on today** once the tournament is on. Follow Matches has to pick
+*some* day either way, so outside the week it opens on day one; the player schedule is
+short enough to be worth seeing whole, so it falls back to *All days*. "Today" is the
+**viewer's** local date, not UTC — `toISOString().slice(0,10)` still reads as yesterday
+east of Greenwich between local midnight and UTC midnight, so in central Europe the tool
+would have opened on the wrong day every night until 02:00, which is exactly when you
+would be looking ahead to the next one.
+
+**Follow Matches** shows one day at a time — with every match of the switched-on disciplines laid out by court
 and **dimmed**. Click a match to star it and it lights up: full-strength card, accent
 header, filled star. *Starred only* collapses the day to just those, keeping each one in
 its true position in the running order, so you can see at a glance when and on which
@@ -824,6 +831,9 @@ browser, which is a much bigger commitment.
   one viewport and one zoom bar, and switching Results → Predictions holds the **exact**
   transform, not just the zoom percentage. `v=schedule` / `v=bracket` / `v=predict` still
   land on the right view *and* sub-view.
+- Day selection checked live on a tournament day: both bars open on today, the bar shows
+  it selected, a date outside the week is not treated as one, and `todayIso()` resolves
+  00:30 CEST on 17 Aug to the 17th where UTC would have said the 16th.
 - The schedule → stars bridge: the button offers exactly what is on screen, starring them
   persists and lights precisely those matches in Follow Matches and nothing else, and the
   button then flips to Remove and takes them all back out again.
