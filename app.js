@@ -38,7 +38,8 @@ const VIEW_ALIAS = { schedule: 'players', bracket: 'draw', predict: 'draw' };
 /** …and those aliases imply a sub-selection. */
 const ALIAS_SUB = { schedule: { playerTab: 'schedule' }, bracket: { drawMode: 'results' },
                     predict: { drawMode: 'yours' } };
-const PLAYER_TABS = ['schedule','list'];
+/* Players first: the schedule is derived from the follow list. */
+const PLAYER_TABS = ['list','schedule'];
 const CAT_LABEL = { ms:'Men’s Singles', ws:'Women’s Singles', md:'Men’s Doubles', wd:'Women’s Doubles', xd:'Mixed Doubles' };
 const ROUND_ORDER = ['R64','R32','R16','QF','SF','Final'];
 const ROUND_LABEL = { R64:'Round of 64', R32:'Round of 32', R16:'Round of 16', QF:'Quarter-final', SF:'Semi-final', Final:'Final' };
@@ -161,7 +162,7 @@ const state = {
   // schedule should show your MS and WD players together without switching.
   cats: new Set(CATS),
   // Which sub-tab of Follow Players is showing.
-  playerTab: 'schedule',
+  playerTab: 'list',
   // A draw is one discipline at a time by definition, so the Draw view keeps
   // its own choice rather than trying to render five trees at once.
   drawCat: 'ms',
@@ -3104,7 +3105,7 @@ function setView(v) {
 
 /** Follow Players holds two ways of looking at the same follow list. */
 function setPlayerTab(t) {
-  state.playerTab = PLAYER_TABS.includes(t) ? t : 'schedule';
+  state.playerTab = PLAYER_TABS.includes(t) ? t : 'list';
   $$('.subtab').forEach(b => {
     const on = b.dataset.ptab === state.playerTab;
     b.classList.toggle('is-active', on);

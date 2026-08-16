@@ -299,14 +299,18 @@ a { color: var(--accent-text); }
   margin: 0 0 12px; padding-bottom: 8px;
   border-bottom: 1px solid var(--border-soft);
 }
+/* Both states have to read as buttons. A transparent border on the unselected
+   one made it look like a label sitting next to a button. */
 .subtab {
-  appearance: none; background: transparent; color: var(--text-muted);
-  border: 1px solid transparent; border-radius: var(--radius-pill);
+  appearance: none; background: var(--surface); color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: var(--radius-btn);
   font: inherit; font-size: 13px; font-weight: 700; letter-spacing: .3px;
-  padding: 6px 15px; cursor: pointer;
+  padding: 7px 18px; cursor: pointer;
 }
-.subtab:hover { color: var(--text); }
-.subtab.is-active { background: var(--surface-2); color: var(--text); border-color: var(--border); }
+.subtab:hover { border-color: var(--accent); color: var(--text); }
+.subtab.is-active {
+  background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
+}
 .subtabs-action { margin-left: auto; }
 .subview { display: none; }
 .subview.is-active { display: block; }

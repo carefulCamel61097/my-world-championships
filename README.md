@@ -60,7 +60,7 @@ selecting**: matches, players, or nothing at all.
 | View | Question | What it holds |
 |---|---|---|
 | **Follow Matches** | What's on, when, and on which court? | A day's order of play, everything dimmed. Star what's worth watching. |
-| **Follow Players** | How are the people I follow doing? | Sub-tabs: *Schedule* (their matches by day) and *Players* (the follow list + detail). |
+| **Follow Players** | How are the people I follow doing? | Sub-tabs: *Players* (the follow list + detail) and *Schedule* (their matches by day). |
 | **Draw** | What does the bracket look like — and who do I say wins? | One tree, four modes: *Results · Your predictions · By world ranking · By race ranking*. |
 
 **Follow Matches and Follow Players are deliberately independent.** Starring a match has
@@ -96,6 +96,11 @@ its true position in the running order, so you can see at a glance when and on w
 court your evening is. Stars are kept in `localStorage`, keyed by match id (the `code` is
 only unique within one draw, so MS and WD would collide). In this view the head-to-head
 moves to a button of its own, because the card itself is the star toggle.
+
+**Follow Players opens on the list**, not the schedule: the schedule is *derived* from who
+you follow, so the list is where you start. Both sub-tabs are drawn as buttons — an
+unselected tab with a transparent border reads as a label sitting next to a button, not as
+something you can click.
 
 **Follow Players → Schedule** is the old Schedule view: the followed players' matches
 only, across every switched-on discipline, grouped by day, with venue time, your local

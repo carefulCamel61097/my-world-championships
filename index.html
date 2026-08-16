@@ -95,21 +95,15 @@
 
   <!-- ============ FOLLOW PLAYERS ============ -->
   <section id="view-players" class="view">
+    <!-- Players first: the schedule is derived from the follow list, so the
+         list is where you start. -->
     <div class="subtabs" role="tablist" aria-label="Follow players">
-      <button class="subtab is-active" data-ptab="schedule" role="tab" aria-selected="true">Schedule</button>
-      <button class="subtab" data-ptab="list" role="tab" aria-selected="false">Players</button>
+      <button class="subtab is-active" data-ptab="list" role="tab" aria-selected="true">Players</button>
+      <button class="subtab" data-ptab="schedule" role="tab" aria-selected="false">Schedule</button>
       <button class="btn btn-primary btn-sm subtabs-action" id="openPickerBtn" type="button">Add players</button>
     </div>
 
-    <div id="ptab-schedule" class="subview is-active">
-      <div class="toolbar">
-        <div class="daybar" id="daybar"></div>
-      </div>
-      <div id="scheduleStatus" class="status" hidden></div>
-      <div id="scheduleList" class="schedule"></div>
-    </div>
-
-    <div id="ptab-list" class="subview">
+    <div id="ptab-list" class="subview is-active">
       <div class="split">
         <aside class="split-list">
           <div class="split-list-head">
@@ -120,6 +114,14 @@
         </aside>
         <div class="split-detail" id="playerDetail"></div>
       </div>
+    </div>
+
+    <div id="ptab-schedule" class="subview">
+      <div class="toolbar">
+        <div class="daybar" id="daybar"></div>
+      </div>
+      <div id="scheduleStatus" class="status" hidden></div>
+      <div id="scheduleList" class="schedule"></div>
     </div>
   </section>
 
