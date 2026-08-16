@@ -53,10 +53,9 @@
   </div>
 
   <nav class="tabs" role="tablist" aria-label="Views">
-    <button class="tab is-active" data-view="schedule" role="tab" aria-selected="true">Schedule</button>
-    <button class="tab" data-view="players" role="tab" aria-selected="false">Players</button>
-    <button class="tab" data-view="bracket" role="tab" aria-selected="false">Bracket</button>
-    <button class="tab" data-view="predict" role="tab" aria-selected="false">Predictions</button>
+    <button class="tab is-active" data-view="matches" role="tab" aria-selected="true">Follow Matches</button>
+    <button class="tab" data-view="players" role="tab" aria-selected="false">Follow Players</button>
+    <button class="tab" data-view="draw" role="tab" aria-selected="false">Draw</button>
     <span class="tabs-hint" title="Keyboard shortcuts">&larr; &rarr; views &middot; Shift discipline &middot; &uarr; &darr; player</span>
   </nav>
 
@@ -73,46 +72,69 @@
 
 <main class="wrap">
 
-  <!-- ============ SCHEDULE VIEW ============ -->
-  <section id="view-schedule" class="view is-active">
+  <!-- ============ FOLLOW MATCHES ============
+       Every match of the day, dimmed, laid out by court. Star the ones worth
+       watching. Deliberately independent of the followed-player list. -->
+  <section id="view-matches" class="view is-active">
     <div class="toolbar">
-      <div class="daybar" id="daybar"></div>
+      <div class="daybar" id="mDaybar"></div>
       <div class="toolbar-right">
+        <span class="starred-count muted" id="starCount"></span>
         <label class="switch">
-          <input type="checkbox" id="onlyMine" checked>
-          <span>Only my players</span>
+          <input type="checkbox" id="starredOnly">
+          <span>Starred only</span>
         </label>
-        <button class="btn btn-primary" id="openPickerBtn" type="button">Add players</button>
+        <button class="btn btn-ghost btn-sm" id="clearStars" type="button">Clear</button>
+      </div>
+      <span class="muted bracket-hint">Click a match to star it &middot; starred matches stay lit, the rest stay dimmed</span>
+    </div>
+
+    <div id="matchesStatus" class="status" hidden></div>
+    <div id="matchesList" class="schedule"></div>
+  </section>
+
+  <!-- ============ FOLLOW PLAYERS ============ -->
+  <section id="view-players" class="view">
+    <div class="subtabs" role="tablist" aria-label="Follow players">
+      <button class="subtab is-active" data-ptab="schedule" role="tab" aria-selected="true">Schedule</button>
+      <button class="subtab" data-ptab="list" role="tab" aria-selected="false">Players</button>
+      <button class="btn btn-primary btn-sm subtabs-action" id="openPickerBtn" type="button">Add players</button>
+    </div>
+
+    <div id="ptab-schedule" class="subview is-active">
+      <div class="toolbar">
+        <div class="daybar" id="daybar"></div>
+      </div>
+      <div id="scheduleStatus" class="status" hidden></div>
+      <div id="scheduleList" class="schedule"></div>
+    </div>
+
+    <div id="ptab-list" class="subview">
+      <div class="split">
+        <aside class="split-list">
+          <div class="split-list-head">
+            <h2>My players</h2>
+            <button class="btn btn-ghost btn-sm" id="openPickerBtn2" type="button">Add</button>
+          </div>
+          <div id="myPlayers" class="mylist"></div>
+        </aside>
+        <div class="split-detail" id="playerDetail"></div>
       </div>
     </div>
-
-    <div id="scheduleStatus" class="status" hidden></div>
-    <div id="scheduleList" class="schedule"></div>
   </section>
 
-  <!-- ============ PLAYERS VIEW ============ -->
-  <section id="view-players" class="view">
-    <div class="split">
-      <aside class="split-list">
-        <div class="split-list-head">
-          <h2>My players</h2>
-          <button class="btn btn-ghost btn-sm" id="openPickerBtn2" type="button">Add</button>
-        </div>
-        <div id="myPlayers" class="mylist"></div>
-      </aside>
-      <div class="split-detail" id="playerDetail"></div>
-    </div>
-  </section>
-
-  <!-- ============ BRACKET VIEW ============ -->
-  <section id="view-bracket" class="view">
+  <!-- ============ DRAW ============
+       One tree, four ways of filling it in. Results and the three prediction
+       sources share a canvas and a camera, so switching mode keeps your zoom
+       and position on the draw. -->
+  <section id="view-draw" class="view">
     <div class="toolbar">
       <div class="bracket-cats" role="group" aria-label="Draw to show">
-        <button class="bcat is-active" data-bcat="ms" type="button">MS</button>
-        <button class="bcat" data-bcat="ws" type="button">WS</button>
-        <button class="bcat" data-bcat="md" type="button">MD</button>
-        <button class="bcat" data-bcat="wd" type="button">WD</button>
-        <button class="bcat" data-bcat="xd" type="button">XD</button>
+        <button class="dcat is-active" data-dcat="ms" type="button">MS</button>
+        <button class="dcat" data-dcat="ws" type="button">WS</button>
+        <button class="dcat" data-dcat="md" type="button">MD</button>
+        <button class="dcat" data-dcat="wd" type="button">WD</button>
+        <button class="dcat" data-dcat="xd" type="button">XD</button>
       </div>
       <div class="zoombar">
         <button class="btn btn-ghost btn-sm" id="zoomOut" type="button" aria-label="Zoom out">&minus;</button>
@@ -121,48 +143,26 @@
         <button class="btn btn-ghost btn-sm" id="zoomFit" type="button" title="Fit the whole draw (F)">Fit</button>
         <button class="btn btn-ghost btn-sm" id="zoomMine" type="button">Jump to my player</button>
       </div>
-      <span class="muted bracket-hint">Scroll or drag to move &middot; <kbd>+</kbd>&thinsp;/&thinsp;<kbd>&minus;</kbd> zoom &middot; <kbd>0</kbd> 100% &middot; <kbd>F</kbd> fit &middot; click a match for the head-to-head</span>
-    </div>
-    <div class="bracket-viewport" id="bracketViewport">
-      <div class="bracket-canvas" id="bracketCanvas"></div>
-    </div>
-  </section>
-
-  <!-- ============ PREDICTIONS VIEW ============ -->
-  <section id="view-predict" class="view">
-    <div class="toolbar">
-      <div class="bracket-cats" role="group" aria-label="Draw to predict">
-        <button class="pcat is-active" data-pcat="ms" type="button">MS</button>
-        <button class="pcat" data-pcat="ws" type="button">WS</button>
-        <button class="pcat" data-pcat="md" type="button">MD</button>
-        <button class="pcat" data-pcat="wd" type="button">WD</button>
-        <button class="pcat" data-pcat="xd" type="button">XD</button>
-      </div>
-      <div class="zoombar">
-        <button class="btn btn-ghost btn-sm" id="pZoomOut" type="button" aria-label="Zoom out">&minus;</button>
-        <span id="pZoomLevel" class="muted">100%</span>
-        <button class="btn btn-ghost btn-sm" id="pZoomIn" type="button" aria-label="Zoom in">+</button>
-        <button class="btn btn-ghost btn-sm" id="pZoomFit" type="button" title="Fit the whole draw (F)">Fit</button>
-        <button class="btn btn-ghost btn-sm" id="pZoomMine" type="button">Jump to my player</button>
-      </div>
       <div class="toolbar-right">
         <span class="predict-score" id="predictScore"></span>
         <button class="btn btn-ghost btn-sm" id="predictCopy" type="button" hidden
                 title="Start your own sheet from this bracket">Use as mine</button>
-        <button class="btn btn-ghost btn-sm" id="predictClear" type="button">Clear picks</button>
-        <button class="btn btn-primary btn-sm" id="predictPng" type="button"
+        <button class="btn btn-ghost btn-sm" id="predictClear" type="button" hidden>Clear picks</button>
+        <button class="btn btn-primary btn-sm" id="predictPng" type="button" hidden
                 title="Save this bracket as an image">Save PNG</button>
       </div>
     </div>
 
-    <div class="pmodes" role="group" aria-label="Where the picks come from">
-      <button class="pmode is-active" data-pmode="yours" type="button">Your predictions</button>
+    <div class="pmodes" role="group" aria-label="How to fill the draw in">
+      <button class="pmode is-active" data-pmode="results" type="button">Results</button>
+      <span class="pmodes-divider" aria-hidden="true"></span>
+      <button class="pmode" data-pmode="yours" type="button">Your predictions</button>
       <button class="pmode" data-pmode="world" type="button">By world ranking</button>
       <button class="pmode" data-pmode="race" type="button">By race ranking</button>
-      <span class="muted bracket-hint">Click the <b>W</b> beside whoever you think wins &mdash; they carry up the draw</span>
+      <span class="muted bracket-hint" id="drawHint"></span>
     </div>
-    <div class="bracket-viewport" id="predictViewport">
-      <div class="bracket-canvas" id="predictCanvas"></div>
+    <div class="bracket-viewport" id="drawViewport">
+      <div class="bracket-canvas" id="drawCanvas"></div>
     </div>
   </section>
 

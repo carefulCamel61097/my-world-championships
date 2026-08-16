@@ -293,16 +293,34 @@ a { color: var(--accent-text); }
   background: var(--border-soft);
 }
 
-/* Bracket and Predictions: which draw to render (one at a time, by definition). */
+/* ---- sub-tabs, inside Follow Players ---- */
+.subtabs {
+  display: flex; align-items: center; gap: 4px;
+  margin: 0 0 12px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.subtab {
+  appearance: none; background: transparent; color: var(--text-muted);
+  border: 1px solid transparent; border-radius: var(--radius-pill);
+  font: inherit; font-size: 13px; font-weight: 700; letter-spacing: .3px;
+  padding: 6px 15px; cursor: pointer;
+}
+.subtab:hover { color: var(--text); }
+.subtab.is-active { background: var(--surface-2); color: var(--text); border-color: var(--border); }
+.subtabs-action { margin-left: auto; }
+.subview { display: none; }
+.subview.is-active { display: block; }
+
+/* Draw: which discipline to render (one at a time, by definition). */
 .bracket-cats { display: flex; gap: 4px; }
-.bcat, .pcat {
+.dcat {
   appearance: none; background: transparent; color: var(--text-muted);
   border: 1px solid var(--border-soft); border-radius: var(--radius-btn);
   font: inherit; font-size: 12px; font-weight: 700; letter-spacing: .4px;
   padding: 5px 11px; cursor: pointer;
 }
-.bcat:hover, .pcat:hover { border-color: var(--accent); color: var(--text); }
-.bcat.is-active, .pcat.is-active {
+.dcat:hover { border-color: var(--accent); color: var(--text); }
+.dcat.is-active {
   background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
 }
 
@@ -470,6 +488,36 @@ a { color: var(--accent-text); }
   .oop-grid .match { margin-bottom: 6px; }
   .oop-grid .match-head .court { display: inline; }
 }
+
+/* ---- Follow Matches: dim everything, light up what you starred ----
+   The whole day is on screen, so the default state has to recede far enough
+   that a handful of starred cards read at a glance from across the room. */
+.match.is-selectable { cursor: pointer; }
+.match.is-dim { opacity: .42; border-left-color: var(--border); }
+.match.is-dim:hover { opacity: .8; border-left-color: var(--accent); }
+.match.is-starred {
+  border-color: var(--accent);
+  border-left-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), var(--shadow);
+}
+.match.is-starred .match-head { background: var(--accent); color: var(--accent-fg); }
+.match.is-starred .match-head .rnd,
+.match.is-starred .match-head .stat { color: var(--accent-fg); }
+.match.is-starred .match-head .sep { opacity: .6; }
+
+.star { font-size: 13px; line-height: 1; color: var(--text-muted); }
+.match.is-starred .star { color: var(--accent-fg); }
+.match.is-dim:hover .star { color: var(--accent-text); }
+
+/* In this view the head-to-head is a button of its own, because the card
+   itself is the star toggle. The status keeps the single margin-left:auto —
+   a second one would split the free space and float them apart. */
+.h2h-btn { appearance: none; background: transparent; font: inherit; cursor: pointer; }
+.h2h-btn:hover { border-color: var(--accent); }
+.match.is-starred .h2h-btn { border-color: var(--accent-fg); color: var(--accent-fg); }
+
+.starred-count { font-size: 12.5px; }
+.starred-count b { color: var(--text); }
 
 /* match card — BWF reading order: flag, seed, name, per-game scores */
 .match {
@@ -860,6 +908,10 @@ a { color: var(--accent-text); }
   background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
 }
 .pmodes .bracket-hint { margin-left: 6px; }
+.pmodes-divider {
+  flex: none; width: 1px; align-self: stretch; margin: 2px 4px;
+  background: var(--border-soft);
+}
 .predict-score { font-size: 12.5px; color: var(--text-muted); }
 .predict-score b { color: var(--text); font-variant-numeric: tabular-nums; }
 

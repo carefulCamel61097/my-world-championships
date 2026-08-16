@@ -32,7 +32,13 @@ const BOARDS = {
 };
 const IS_DOUBLES = { ms: false, ws: false, md: true, wd: true, xd: true };
 const CATS = ['ms','ws','md','wd','xd'];
-const VIEWS = ['schedule','players','bracket','predict'];
+const VIEWS = ['matches','players','draw'];
+/** Old links keep working: v=schedule|bracket|predict predate the restructure. */
+const VIEW_ALIAS = { schedule: 'players', bracket: 'draw', predict: 'draw' };
+/** …and those aliases imply a sub-selection. */
+const ALIAS_SUB = { schedule: { playerTab: 'schedule' }, bracket: { drawMode: 'results' },
+                    predict: { drawMode: 'yours' } };
+const PLAYER_TABS = ['schedule','list'];
 const CAT_LABEL = { ms:'Men’s Singles', ws:'Women’s Singles', md:'Men’s Doubles', wd:'Women’s Doubles', xd:'Mixed Doubles' };
 const ROUND_ORDER = ['R64','R32','R16','QF','SF','Final'];
 const ROUND_LABEL = { R64:'Round of 64', R32:'Round of 32', R16:'Round of 16', QF:'Quarter-final', SF:'Semi-final', Final:'Final' };
@@ -150,24 +156,31 @@ const store = {
 };
 
 const state = {
-  view: 'schedule',
+  view: 'matches',
   // Disciplines are independent on/off filters, all on by default: a personal
   // schedule should show your MS and WD players together without switching.
   cats: new Set(CATS),
-  // The Bracket view is inherently one draw at a time, so it keeps its own
-  // choice rather than trying to render five brackets at once.
-  bracketCat: 'ms',
-  // Predictions are their own draw choice: you might be reading the MS bracket
-  // while filling in your WD picks.
-  predictCat: 'ms',
-  // 'yours' | 'world' | 'race' — your own sheet, or one derived from a ranking.
-  predictMode: 'yours',
+  // Which sub-tab of Follow Players is showing.
+  playerTab: 'schedule',
+  // A draw is one discipline at a time by definition, so the Draw view keeps
+  // its own choice rather than trying to render five trees at once.
+  drawCat: 'ms',
+  // 'results' | 'yours' | 'world' | 'race' — the real draw, your own sheet, or
+  // one derived from a ranking. All four are the same tree.
+  drawMode: 'results',
   // cat -> { matchCode: entryKey } — who you think wins each match.
   predict: {},
   // cat -> ISO date the sheet was last touched, stamped onto the PNG export.
   predictAt: {},
+  // Match ids starred in Follow Matches. Deliberately unrelated to `selected`:
+  // following a player and starring a match are two separate ways of using the
+  // tool, and mixing them makes both harder to read.
+  starred: new Set(),
+  starredOnly: false,
   day: 'all',
-  onlyMine: true,
+  // Follow Matches is about reading one day's order of play, so it opens on a
+  // day rather than on all 267 fixtures at once. Set properly in init().
+  matchDay: TMT.dates[0],
   selected: new Set(store.read('players', [])),
   active: null,          // highlighted player id in the Players view
   draws: {},             // cat -> { entries, cells, matches, maxCol }
@@ -220,13 +233,23 @@ function readHash() {
     if (want.length) {
       state.cats = new Set(want);
       // A link that names disciplines outranks whatever draw you were last on.
-      state.bracketCat = state.predictCat = want[0];
+      state.drawCat = want[0];
       state.catsFromLink = true;
     }
   }
 
   const v = h.get('v');
-  if (VIEWS.includes(v)) state.view = v;
+  if (VIEWS.includes(v)) {
+    state.view = v;
+  } else if (VIEW_ALIAS[v]) {
+    // A link made before the restructure. Land on the view that absorbed it,
+    // with the sub-selection that matches what the sender was looking at —
+    // and record that the link chose it, so the remembered sub-view from
+    // localStorage does not quietly overrule what was shared.
+    state.view = VIEW_ALIAS[v];
+    Object.assign(state, ALIAS_SUB[v]);
+    state.subFromLink = Object.keys(ALIAS_SUB[v]);
+  }
 }
 
 /* ============================ model helpers ============================ */
@@ -657,12 +680,15 @@ function statusOf(m) {
   return { cls: 'upcoming', text: 'Not scheduled' };
 }
 
-function sideRow(m, which) {
+function sideRow(m, which, opts) {
   const team = m['team' + which];
   const seed = m['team' + which + 'seed'];
   const isWin = m.winner === which;
   const isLose = (m.winner === 1 || m.winner === 2) && !isWin;
-  const mine = teamIsMine(team);
+  // Follow Matches is a separate way of using the tool from Follow Players, so
+  // the followed-player cues are suppressed there rather than half-applied.
+  const usePlayers = !(opts && opts.ignorePlayers);
+  const mine = usePlayers && teamIsMine(team);
 
   const scores = (m.score || []).map(g => {
     const own = which === 1 ? g.home : g.away;
@@ -672,7 +698,7 @@ function sideRow(m, which) {
   }).join('');
 
   const names = team && team.players && team.players.length
-    ? team.players.map(p => `<span class="${state.selected.has(String(p.id)) ? 'mine' : ''}">${esc(p.nameDisplay)}</span>`).join(' / ')
+    ? team.players.map(p => `<span class="${usePlayers && state.selected.has(String(p.id)) ? 'mine' : ''}">${esc(p.nameDisplay)}</span>`).join(' / ')
     : '<span class="muted">TBD</span>';
 
   const cls = ['side', isWin ? 'is-winner' : '', isLose ? 'is-loser' : '', mine ? 'is-mine' : ''].join(' ');
@@ -716,14 +742,35 @@ function matchCard(m, opts) {
     m.oopText ? `<span>${esc(to24h(m.oopText))}</span>` : '',
   ].filter(Boolean).join('');
 
-  const card = el('div', 'match' + (st.cls === 'live' ? ' is-live' : ''));
+  const starred = isStarred(m);
+  const card = el('div', 'match'
+    + (st.cls === 'live' ? ' is-live' : '')
+    + (opts && opts.selectable ? ' is-selectable' + (starred ? ' is-starred' : ' is-dim') : ''));
   card.innerHTML = `
     <div class="match-head">${head}</div>
-    <div class="match-body">${sideRow(m, 1)}${sideRow(m, 2)}</div>
+    <div class="match-body">${sideRow(m, 1, opts)}${sideRow(m, 2, opts)}</div>
     <div class="match-foot">${foot}</div>`;
 
-  // Any match with two known sides can open its head-to-head.
   const k1 = entryKey(m.team1), k2 = entryKey(m.team2);
+
+  if (opts && opts.selectable) {
+    // Starring is the point of this view, so the card itself is the target and
+    // the head-to-head moves onto its own button rather than sharing the click.
+    card.querySelector('.match-head').insertAdjacentHTML('afterbegin',
+      `<span class="star" aria-hidden="true">${starred ? '&#9733;' : '&#9734;'}</span>`);
+    card.title = starred ? 'Starred — click to remove' : 'Click to star this match';
+    card.addEventListener('click', () => toggleStar(m));
+    if (k1 && k2) {
+      const cue = el('button', 'h2h-cue h2h-btn', 'H2H');
+      cue.type = 'button';
+      cue.title = 'Show head-to-head';
+      cue.addEventListener('click', e => { e.stopPropagation(); openH2H(m.team1, m.team2); });
+      card.querySelector('.match-head').appendChild(cue);
+    }
+    return card;
+  }
+
+  // Any match with two known sides can open its head-to-head.
   if (k1 && k2) {
     const sides = card.querySelectorAll('.side');
     sides.forEach(s => s.classList.add('side-clickable'));
@@ -733,6 +780,35 @@ function matchCard(m, opts) {
     card.title = 'Show head-to-head';
   }
   return card;
+}
+
+/* ============================ starred matches ============================
+
+   Follow Matches is its own way of using the tool: you read a day's order of
+   play and mark the matches worth watching. It deliberately shares nothing
+   with the followed-player list — a star means "I picked this", full stop.
+
+   Keyed by match id, which is unique across the whole tournament. The `code`
+   is only unique within one draw, so MS and WD would collide.
+   ======================================================================== */
+
+const isStarred = m => state.starred.has(String(m.id));
+
+function persistStars() {
+  store.write('starred', Array.from(state.starred));
+}
+
+function toggleStar(m) {
+  const k = String(m.id);
+  if (state.starred.has(k)) state.starred.delete(k); else state.starred.add(k);
+  persistStars();
+  renderMatches();
+}
+
+function clearStars() {
+  state.starred.clear();
+  persistStars();
+  renderMatches();
 }
 
 /* ============================ view: schedule ============================ */
@@ -757,7 +833,7 @@ function courtNum(name) {
  * players gives a dense grid rather than sixteen mostly-empty rows — while two
  * matches on the same row are still genuinely at the same point in the day.
  */
-function renderCourtGrid(list, into) {
+function renderCourtGrid(list, into, cardOpts) {
   const placed = list.filter(m => m.courtName && m.courtSeq != null);
   if (placed.length !== list.length) return false;      // OOP not out for this day
 
@@ -785,7 +861,7 @@ function renderCourtGrid(list, into) {
     (a.courtSeq - b.courtSeq) || (colOf.get(a.courtName) - colOf.get(b.courtName)));
 
   for (const m of ordered) {
-    const card = matchCard(m);
+    const card = matchCard(m, cardOpts);
     card.style.gridColumn = colOf.get(m.courtName) + 1;
     card.style.gridRow = rowOf.get(m.courtSeq) + 2;     // row 1 is the court header
     grid.appendChild(card);
@@ -795,68 +871,45 @@ function renderCourtGrid(list, into) {
   return true;
 }
 
-function renderDaybar() {
-  const bar = $('#daybar');
+/** One day bar, shared by both schedules but driven by its own day key. */
+function renderDaybar(sel, current, pick) {
+  const bar = $(sel);
+  if (!bar) return;
   bar.innerHTML = '';
 
-  const all = el('button', 'day' + (state.day === 'all' ? ' is-active' : ''), '<b>All</b>days');
-  all.onclick = () => { state.day = 'all'; renderDaybar(); renderSchedule(); };
+  const all = el('button', 'day' + (current === 'all' ? ' is-active' : ''), '<b>All</b>days');
+  all.onclick = () => pick('all');
   bar.appendChild(all);
 
   for (const d of TMT.dates) {
     const s = shortDay(d);
-    const b = el('button', 'day' + (state.day === d ? ' is-active' : ''), `<b>${esc(s.dom)}</b>${esc(s.dow)}`);
-    b.onclick = () => { state.day = d; renderDaybar(); renderSchedule(); };
+    const b = el('button', 'day' + (current === d ? ' is-active' : ''), `<b>${esc(s.dom)}</b>${esc(s.dow)}`);
+    b.onclick = () => pick(d);
     bar.appendChild(b);
   }
 }
 
-function renderSchedule() {
-  const wrap = $('#scheduleList');
-  const cats = activeCats();
-  const loaded = cats.filter(c => state.draws[c]);
-  wrap.innerHTML = '';
-
-  if (!loaded.length) {
-    wrap.appendChild(el('div', 'status', '<span class="spinner"></span>Loading the draws&hellip;'));
-    return;
-  }
-
-  if (state.onlyMine && state.selected.size === 0) {
-    const e = el('div', 'empty');
-    e.innerHTML = `
-      <h3>No players selected yet</h3>
-      <p>Pick the players you want to follow and this becomes your personal schedule.</p>`;
-    const b = el('button', 'btn btn-primary', 'Add players');
-    b.onclick = openPicker;
-    e.appendChild(b);
-    wrap.appendChild(e);
-    return;
-  }
-
-  // Byes are bracket bookkeeping, not fixtures — never list them.
-  let matches = [];
-  for (const c of loaded) {
+/** Every non-bye match in the switched-on disciplines, schedule data merged in. */
+function allMatches() {
+  const out = [];
+  for (const c of activeCats()) {
     const draw = state.draws[c];
+    if (!draw) continue;
     for (const m of draw.matches) {
+      // Byes are bracket bookkeeping, not fixtures — never list them.
       if (draw.byeCodes.has(String(m.code))) continue;
-      matches.push(enrich(m));
+      out.push(enrich(m));
     }
   }
-  if (state.onlyMine) matches = matches.filter(matchIsMine);
-  if (state.day !== 'all') matches = matches.filter(m => dayKeyOf(m) === state.day);
+  return out;
+}
 
-  if (!matches.length) {
-    const label = cats.length === CATS.length ? 'matches'
-      : cats.map(c => c.toUpperCase()).join('/') + ' matches';
-    const e = el('div', 'empty');
-    e.innerHTML = `<h3>Nothing here</h3><p>No ${esc(label)}${
-      state.day === 'all' ? '' : ' on this day'} for your selection yet.</p>`;
-    wrap.appendChild(e);
-    return;
-  }
-
-  // Group: scheduled days first (chronological), then unscheduled by round.
+/**
+ * Days as headed groups, each laid out by court once its order of play is out.
+ * Shared by both schedules — the only difference between them is which matches
+ * they hand over and how the cards behave.
+ */
+function renderDayGroups(matches, wrap, cardOpts) {
   const groups = new Map();
   for (const m of matches) {
     const k = dayKeyOf(m) || 'tbc';
@@ -864,6 +917,7 @@ function renderSchedule() {
     groups.get(k).push(m);
   }
 
+  // Scheduled days first, chronologically; anything unscheduled last.
   const keys = Array.from(groups.keys()).sort((a, b) => {
     if (a === 'tbc') return 1;
     if (b === 'tbc') return -1;
@@ -884,17 +938,104 @@ function renderSchedule() {
 
     const g = el('div', 'daygroup');
     const head = el('div', 'daygroup-head');
+    const n = `${list.length} match${list.length === 1 ? '' : 'es'}`;
+    const starred = list.filter(isStarred).length;
     head.innerHTML = k === 'tbc'
-      ? `<h3>Not yet scheduled</h3><span>${list.length} match${list.length === 1 ? '' : 'es'} &middot; times published nearer the day</span>`
-      : `<h3>${esc(prettyDay(k))}</h3><span>${list.length} match${list.length === 1 ? '' : 'es'}</span>`;
+      ? `<h3>Not yet scheduled</h3><span>${n} &middot; times published nearer the day</span>`
+      : `<h3>${esc(prettyDay(k))}</h3><span>${n}${
+          cardOpts && cardOpts.selectable && starred ? ` &middot; <b>${starred}</b> starred` : ''}</span>`;
     g.appendChild(head);
     // Once the order of play is out, lay the day out by court; until then a
     // plain chronological list is all the data supports.
-    if (k === 'tbc' || !renderCourtGrid(list, g)) {
-      for (const m of list) g.appendChild(matchCard(m));
+    if (k === 'tbc' || !renderCourtGrid(list, g, cardOpts)) {
+      for (const m of list) g.appendChild(matchCard(m, cardOpts));
     }
     wrap.appendChild(g);
   }
+}
+
+/** Follow Players → Schedule: the matches of the players you follow. */
+function renderSchedule() {
+  const wrap = $('#scheduleList');
+  if (!wrap) return;
+  const cats = activeCats();
+  const loaded = cats.filter(c => state.draws[c]);
+  wrap.innerHTML = '';
+
+  if (!loaded.length) {
+    wrap.appendChild(el('div', 'status', '<span class="spinner"></span>Loading the draws&hellip;'));
+    return;
+  }
+
+  if (state.selected.size === 0) {
+    const e = el('div', 'empty');
+    e.innerHTML = `
+      <h3>No players selected yet</h3>
+      <p>Pick the players you want to follow and this becomes your personal schedule.</p>`;
+    const b = el('button', 'btn btn-primary', 'Add players');
+    b.onclick = openPicker;
+    e.appendChild(b);
+    wrap.appendChild(e);
+    return;
+  }
+
+  let matches = allMatches().filter(matchIsMine);
+  if (state.day !== 'all') matches = matches.filter(m => dayKeyOf(m) === state.day);
+
+  if (!matches.length) {
+    const label = cats.length === CATS.length ? 'matches'
+      : cats.map(c => c.toUpperCase()).join('/') + ' matches';
+    const e = el('div', 'empty');
+    e.innerHTML = `<h3>Nothing here</h3><p>No ${esc(label)}${
+      state.day === 'all' ? '' : ' on this day'} for your selection yet.</p>`;
+    wrap.appendChild(e);
+    return;
+  }
+
+  renderDayGroups(matches, wrap);
+}
+
+/**
+ * Follow Matches: the whole day, dimmed, laid out by court. Star what looks
+ * worth watching and it stays lit. Nothing here consults the followed-player
+ * list — that is the other half of the tool.
+ */
+function renderMatches() {
+  const wrap = $('#matchesList');
+  if (!wrap) return;
+  const loaded = activeCats().filter(c => state.draws[c]);
+  wrap.innerHTML = '';
+  paintStarBar();
+
+  if (!loaded.length) {
+    wrap.appendChild(el('div', 'status', '<span class="spinner"></span>Loading the draws&hellip;'));
+    return;
+  }
+
+  let matches = allMatches();
+  if (state.matchDay !== 'all') matches = matches.filter(m => dayKeyOf(m) === state.matchDay);
+  if (state.starredOnly) matches = matches.filter(isStarred);
+
+  if (!matches.length) {
+    const e = el('div', 'empty');
+    e.innerHTML = state.starredOnly
+      ? `<h3>Nothing starred${state.matchDay === 'all' ? '' : ' on this day'}</h3>
+         <p>Turn off <em>Starred only</em> and click the matches you want to watch.</p>`
+      : `<h3>Nothing here</h3><p>No matches in the switched-on disciplines${
+          state.matchDay === 'all' ? '' : ' on this day'} yet.</p>`;
+    wrap.appendChild(e);
+    return;
+  }
+
+  renderDayGroups(matches, wrap, { selectable: true, ignorePlayers: true });
+}
+
+function paintStarBar() {
+  const n = state.starred.size;
+  const box = $('#starCount');
+  if (box) box.textContent = n === 0 ? 'Nothing starred yet' : `${n} starred`;
+  const clear = $('#clearStars');
+  if (clear) clear.disabled = n === 0;
 }
 
 /* ============================ view: players ============================ */
@@ -1441,8 +1582,8 @@ function bracketSide(m, which, mine, isBye) {
 }
 
 function renderBracket() {
-  const canvas = $('#bracketCanvas');
-  const draw = state.draws[state.bracketCat];
+  const canvas = $(CAM.canvas);
+  const draw = state.draws[state.drawCat];
   canvas.innerHTML = '';
 
   if (!draw) {
@@ -1521,27 +1662,24 @@ function renderBracket() {
   }
 
   canvas.appendChild(frag);
-  frameMap('bracket');
+  frameMap();
 }
 
-/* ---- cameras ----
+/* ---- camera ----
 
-   Two views are pannable maps (Bracket and Predictions), and they must not
-   share a camera: zooming the bracket should not move your prediction sheet.
-   Each keeps its own zoom/pan against its own viewport and canvas.
+   The Draw view is one pannable map showing one tree. Results and the three
+   prediction sources are modes of it, not separate views, so they share a
+   camera: flipping between what you predicted and what actually happened keeps
+   your zoom and your place on the draw.
 */
 
-const MAPS = {
-  bracket: { vp: '#bracketViewport', canvas: '#bracketCanvas', readout: '#zoomLevel',
-             node: '.bnode', zoom: 1, pan: { x: 0, y: 0 } },
-  predict: { vp: '#predictViewport', canvas: '#predictCanvas', readout: '#pZoomLevel',
-             node: '.pnode', zoom: 1, pan: { x: 0, y: 0 } },
+const CAM = {
+  vp: '#drawViewport', canvas: '#drawCanvas', readout: '#zoomLevel',
+  node: '.bnode, .pnode',            // only one kind is on the canvas at a time
+  zoom: 1, pan: { x: 0, y: 0 },
 };
 
-/** The camera for a view name, defaulting to whichever view is showing. */
-function mapFor(view) {
-  return MAPS[(view || state.view) === 'predict' ? 'predict' : 'bracket'];
-}
+const mapFor = () => CAM;
 
 /**
  * Keep the canvas inside its viewport: centre it on whichever axis it is
@@ -1623,11 +1761,13 @@ function jumpToMine(cam) {
  * is only reset when the discipline changes, so tabbing away to the Players
  * view and back does not throw away where you were looking.
  */
-function frameMap(view) {
-  const cam = mapFor(view);
-  const cat = view === 'predict' ? state.predictCat : state.bracketCat;
+function frameMap() {
+  const cam = CAM;
+  const cat = state.drawCat;
   // Nothing to frame against until the draw is in: leave framedFor unset so
-  // the render that follows the fetch does the framing instead.
+  // the render that follows the fetch does the framing instead. Note this keys
+  // on the discipline only — switching between Results and a prediction sheet
+  // is the same tree, so it must not move the camera.
   if (!state.draws[cat] || cam.framedFor === cat) {
     requestAnimationFrame(() => applyTransform(cam));
     return;
@@ -1733,11 +1873,8 @@ function initZoomBar(cam, ids) {
    book say?" — and can be copied into your own sheet as a starting point.
    ==================================================================== */
 
-const PRED_MODES = [
-  { id: 'yours', label: 'Your predictions', title: 'Pick every match yourself' },
-  { id: 'world', label: 'By world ranking', title: 'The better BWF World Ranking wins every match' },
-  { id: 'race',  label: 'By race ranking',  title: 'The better HSBC Race to Finals standing wins every match' },
-];
+/** The four ways the same tree can be filled in. */
+const DRAW_MODES = ['results', 'yours', 'world', 'race'];
 
 /** Your picks for one discipline: { matchCode: entryKey }. */
 function predPicks(cat) {
@@ -1852,7 +1989,7 @@ function setPick(draw, code, key) {
   if (picks[String(code)] === key) delete picks[String(code)];
   else picks[String(code)] = key;
   persistPredictions(draw.cat);
-  renderPredict();
+  renderDraw();
 }
 
 function predSide(m, t, which, isBye, res) {
@@ -1878,8 +2015,8 @@ function predSide(m, t, which, isBye, res) {
 }
 
 function renderPredict() {
-  const canvas = $('#predictCanvas');
-  const cat = state.predictCat;
+  const canvas = $(CAM.canvas);
+  const cat = state.drawCat;
   const draw = state.draws[cat];
   canvas.innerHTML = '';
   paintPredictBar(null);
@@ -1889,7 +2026,7 @@ function renderPredict() {
     return;
   }
 
-  const mode = state.predictMode;
+  const mode = state.drawMode;
   const res = resolvePredictions(draw, mode);
   const editable = mode === 'yours';
   const seedOf = t => {
@@ -2011,28 +2148,54 @@ function renderPredict() {
   frag.appendChild(champ);
 
   canvas.appendChild(frag);
-  frameMap('predict');
+  frameMap();
   paintPredictBar(res);
 }
 
-/** Mode buttons, tally and the action button beside them. */
-function paintPredictBar(res) {
-  $$('.pcat').forEach(b => b.classList.toggle('is-active', b.dataset.pcat === state.predictCat));
-  $$('.pmode').forEach(b => b.classList.toggle('is-active', b.dataset.pmode === state.predictMode));
+/**
+ * The Draw view. Results and the three prediction sources are the same tree
+ * filled in four different ways, so they share this one entry point — and the
+ * camera, which is why switching mode never moves the draw under you.
+ */
+function renderDraw() {
+  if (state.drawMode !== 'results') {
+    // renderPredict paints the bar itself, tally included. Repainting the
+    // chrome afterwards would blank the tally it just worked out.
+    renderPredict();
+    return;
+  }
+  renderBracket();
+  paintPredictBar(null, true);
+}
 
-  const auto = state.predictMode !== 'yours';
-  const copy = $('#predictCopy'), clear = $('#predictClear');
-  copy.hidden = !auto;
-  clear.hidden = auto;
+const DRAW_HINTS = {
+  results: 'Scroll or drag to move · <kbd>+</kbd>&thinsp;/&thinsp;<kbd>&minus;</kbd> zoom · <kbd>0</kbd> 100% · <kbd>F</kbd> fit · click a match for the head-to-head',
+  yours:   'Click the <b>W</b> beside whoever you think wins — they carry up the draw',
+  world:   'Read-only: the better BWF World Ranking wins every match',
+  race:    'Read-only: the better Race to Finals standing wins every match',
+};
+
+/** Mode buttons, tally and the action buttons beside them. */
+function paintPredictBar(res, chromeOnly) {
+  $$('.dcat').forEach(b => b.classList.toggle('is-active', b.dataset.dcat === state.drawCat));
+  $$('.pmode').forEach(b => b.classList.toggle('is-active', b.dataset.pmode === state.drawMode));
+
+  const results = state.drawMode === 'results';
+  const auto = !results && state.drawMode !== 'yours';
+  $('#predictCopy').hidden = !auto;
+  $('#predictClear').hidden = results || auto;
+  $('#predictPng').hidden = results;
+  $('#drawHint').innerHTML = DRAW_HINTS[state.drawMode] || '';
 
   const box = $('#predictScore');
-  if (!res) { box.textContent = ''; return; }
+  if (results) { box.textContent = ''; return; }
+  if (chromeOnly || !res) { if (!res) box.textContent = ''; return; }
 
   const parts = [];
   if (auto) {
-    const idx = state.ranks[rankSlot(state.predictMode, state.predictCat)];
+    const idx = state.ranks[rankSlot(state.drawMode, state.drawCat)];
     if (!idx || !idx.__done) parts.push('Loading rankings&hellip;');
-    else parts.push(BOARDS[state.predictMode].label + ' bracket');
+    else parts.push(BOARDS[state.drawMode].label + ' bracket');
   } else {
     parts.push(`<b>${res.made}</b>/${res.open} picked`);
   }
@@ -2040,39 +2203,39 @@ function paintPredictBar(res) {
   box.innerHTML = parts.join(' &middot; ');
 }
 
-function setPredictCat(c) {
-  state.predictCat = c;
-  store.write('predictCat', c);
+function setDrawCat(c) {
+  state.drawCat = c;
+  store.write('drawCat', c);
   paintCatChips();
-  renderPredict();
-  frameMap('predict');
-  loadDraw(c).then(() => { renderPredict(); }).catch(() => {});
+  renderDraw();
+  frameMap();
+  loadDraw(c).then(() => renderDraw()).catch(() => {});
   ensurePredictRanks();
 }
 
-function setPredictMode(mode) {
-  state.predictMode = mode;
-  store.write('predictMode', mode);
-  renderPredict();
+function setDrawMode(mode) {
+  state.drawMode = mode;
+  store.write('drawMode', mode);
+  renderDraw();
   ensurePredictRanks();
 }
 
 /** Auto brackets need the ranking table for the board they are built on. */
 function ensurePredictRanks() {
-  const mode = state.predictMode;
-  if (mode === 'yours') return;
-  const cat = state.predictCat;
+  const mode = state.drawMode;
+  if (mode === 'yours' || mode === 'results') return;
+  const cat = state.drawCat;
   if (!state.draws[cat] || state.ranks[rankSlot(mode, cat)]) return;
   loadRankIndex(cat, mode)
-    .then(() => { if (state.view === 'predict') renderPredict(); })
+    .then(() => { if (state.view === 'draw') renderDraw(); })
     .catch(() => { /* falls back to seeding */ });
 }
 
 /** Copy the ranking-based bracket into your own sheet as a starting point. */
 function copyAutoToPicks() {
-  const draw = state.draws[state.predictCat];
+  const draw = state.draws[state.drawCat];
   if (!draw) return;
-  const res = resolvePredictions(draw, state.predictMode);
+  const res = resolvePredictions(draw, state.drawMode);
   const picks = {};
   for (const [k, m] of Object.entries(draw.cells)) {
     if (!m) continue;
@@ -2082,16 +2245,16 @@ function copyAutoToPicks() {
     if (k.startsWith('0-') && draw.byeCodes.has(String(m.code))) continue;
     picks[String(m.code)] = entryKey(w);
   }
-  state.predict[state.predictCat] = picks;
-  persistPredictions(state.predictCat);
-  setPredictMode('yours');
+  state.predict[state.drawCat] = picks;
+  persistPredictions(state.drawCat);
+  setDrawMode('yours');
 }
 
 function clearPicks() {
-  state.predict[state.predictCat] = {};
-  delete state.predictAt[state.predictCat];
+  state.predict[state.drawCat] = {};
+  delete state.predictAt[state.drawCat];
   persistPredictions();
-  renderPredict();
+  renderDraw();
 }
 
 /* ---- PNG export ----
@@ -2207,14 +2370,14 @@ function semiFinalPaths(draw, res) {
 }
 
 async function exportPredictionsPng(btn) {
-  const cat = state.predictCat;
+  const cat = state.drawCat;
   const draw = state.draws[cat];
   if (!draw) return;
 
   const label = btn && btn.textContent;
   if (btn) { btn.disabled = true; btn.textContent = 'Rendering…'; }
   try {
-    const mode = state.predictMode;
+    const mode = state.drawMode;
     const res = resolvePredictions(draw, mode);
 
     const HEAD = 76, FOOT = 34;
@@ -2890,17 +3053,32 @@ function updatePickerCount() {
 /* ============================ wiring ============================ */
 
 function renderAll() {
-  if (state.view === 'schedule') {
-    renderDaybar();
-    renderSchedule();
+  if (state.view === 'matches') {
+    renderDaybar('#mDaybar', state.matchDay, pickMatchDay);
+    renderMatches();
   } else if (state.view === 'players') {
-    renderMyPlayers();
-    renderPlayerDetail();
-  } else if (state.view === 'predict') {
-    renderPredict();
+    if (state.playerTab === 'schedule') {
+      renderDaybar('#daybar', state.day, pickScheduleDay);
+      renderSchedule();
+    } else {
+      renderMyPlayers();
+      renderPlayerDetail();
+    }
   } else {
-    renderBracket();
+    renderDraw();
   }
+}
+
+function pickScheduleDay(d) {
+  state.day = d;
+  renderDaybar('#daybar', state.day, pickScheduleDay);
+  renderSchedule();
+}
+
+function pickMatchDay(d) {
+  state.matchDay = d;
+  renderDaybar('#mDaybar', state.matchDay, pickMatchDay);
+  renderMatches();
 }
 
 function setView(v) {
@@ -2918,8 +3096,25 @@ function setView(v) {
   renderAll();
 
   // The viewport has no size until the section is visible, so fit afterwards.
-  if ((v === 'bracket' || v === 'predict') && first) frameMap(v);
-  if (v === 'predict') ensurePredictRanks();
+  if (v === 'draw') {
+    if (first) frameMap();
+    ensurePredictRanks();
+  }
+}
+
+/** Follow Players holds two ways of looking at the same follow list. */
+function setPlayerTab(t) {
+  state.playerTab = PLAYER_TABS.includes(t) ? t : 'schedule';
+  $$('.subtab').forEach(b => {
+    const on = b.dataset.ptab === state.playerTab;
+    b.classList.toggle('is-active', on);
+    b.setAttribute('aria-selected', String(on));
+  });
+  for (const name of PLAYER_TABS) {
+    $('#ptab-' + name).classList.toggle('is-active', name === state.playerTab);
+  }
+  store.write('playerTab', state.playerTab);
+  if (state.view === 'players') renderAll();
 }
 
 function paintCatChips() {
@@ -2933,8 +3128,7 @@ function paintCatChips() {
     b.classList.toggle('is-active', on);
     b.setAttribute('aria-pressed', String(on));
   });
-  $$('.bcat').forEach(b => b.classList.toggle('is-active', b.dataset.bcat === state.bracketCat));
-  $$('.pcat').forEach(b => b.classList.toggle('is-active', b.dataset.pcat === state.predictCat));
+  $$('.dcat').forEach(b => b.classList.toggle('is-active', b.dataset.dcat === state.drawCat));
 }
 
 /** Toggle one discipline on or off. Turning the last one off is a no-op. */
@@ -2966,18 +3160,9 @@ function soloCat(c) {
   ensureCats();
 }
 
-function setBracketCat(c) {
-  state.bracketCat = c;
-  store.write('bracketCat', c);
-  paintCatChips();
-  renderBracket();
-  frameMap('bracket');
-  loadDraw(c).then(() => { renderBracket(); }).catch(() => {});
-}
-
-/** Make sure every switched-on discipline (and the map views') is loaded. */
+/** Make sure every switched-on discipline (and the Draw view's) is loaded. */
 async function ensureCats() {
-  const want = Array.from(new Set([...activeCats(), state.bracketCat, state.predictCat]));
+  const want = Array.from(new Set([...activeCats(), state.drawCat]));
   for (const c of want) {
     if (state.draws[c]) continue;
     try {
@@ -3001,20 +3186,15 @@ function stepView(delta) {
 }
 
 /**
- * Shift cycles disciplines. In the Bracket view that means the drawn bracket;
+ * Shift cycles disciplines. In the Draw view that means the tree on screen;
  * elsewhere it solos each discipline in turn and then returns to showing all,
  * which keeps the "move the category to the right" feel now that the chips are
  * independent toggles.
  */
 function stepCat(delta) {
-  if (state.view === 'bracket') {
-    const i = CATS.indexOf(state.bracketCat);
-    setBracketCat(CATS[(i + delta + CATS.length) % CATS.length]);
-    return;
-  }
-  if (state.view === 'predict') {
-    const i = CATS.indexOf(state.predictCat);
-    setPredictCat(CATS[(i + delta + CATS.length) % CATS.length]);
+  if (state.view === 'draw') {
+    const i = CATS.indexOf(state.drawCat);
+    setDrawCat(CATS[(i + delta + CATS.length) % CATS.length]);
     return;
   }
   const ring = [...CATS, 'all'];
@@ -3053,8 +3233,8 @@ function initHotkeys() {
 
     // Zoom the bracket. Covers the main row (+ needs Shift on most layouts, so
     // '=' counts too) and the numpad, via e.code so layout doesn't matter.
-    if (state.view === 'bracket' || state.view === 'predict') {
-      const cam = mapFor();
+    if (state.view === 'draw') {
+      const cam = CAM;
       const zoomIn  = e.key === '+' || e.key === '=' || e.code === 'NumpadAdd' || e.code === 'Equal';
       const zoomOut = e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract' || e.code === 'Minus';
       if (zoomIn)  { e.preventDefault(); setZoom(cam, cam.zoom * 1.2); return; }
@@ -3070,14 +3250,20 @@ function initHotkeys() {
       case 'ArrowLeft':  e.preventDefault(); stepView(-1); break;
       case 'ArrowRight': e.preventDefault(); stepView(1); break;
       case 'Shift':      if (!e.repeat) { e.preventDefault(); stepCat(1); } break;
-      case 'ArrowUp':    if (state.view === 'players') { e.preventDefault(); stepPlayer(-1); } break;
-      case 'ArrowDown':  if (state.view === 'players') { e.preventDefault(); stepPlayer(1); } break;
+      // Stepping the highlighted player only means anything on its own sub-tab.
+      case 'ArrowUp':
+        if (state.view === 'players' && state.playerTab === 'list') { e.preventDefault(); stepPlayer(-1); }
+        break;
+      case 'ArrowDown':
+        if (state.view === 'players' && state.playerTab === 'list') { e.preventDefault(); stepPlayer(1); }
+        break;
     }
   });
 }
 
 function showError(e) {
-  const box = $('#scheduleStatus');
+  const box = $(state.view === 'matches' ? '#matchesStatus' : '#scheduleStatus');
+  if (!box) return;
   box.hidden = false;
   box.className = 'status is-error';
   box.textContent = 'Could not reach the BWF data service. ' +
@@ -3114,41 +3300,50 @@ async function init() {
   initTheme();
 
   $$('.tab').forEach(t => t.onclick = () => setView(t.dataset.view));
+  $$('.subtab').forEach(b => b.onclick = () => setPlayerTab(b.dataset.ptab));
   $$('.cat').forEach(b => b.onclick = () => toggleCat(b.dataset.cat));
-  $$('.bcat').forEach(b => b.onclick = () => setBracketCat(b.dataset.bcat));
-  $$('.pcat').forEach(b => b.onclick = () => setPredictCat(b.dataset.pcat));
-  $$('.pmode').forEach(b => b.onclick = () => setPredictMode(b.dataset.pmode));
+  $$('.dcat').forEach(b => b.onclick = () => setDrawCat(b.dataset.dcat));
+  $$('.pmode').forEach(b => b.onclick = () => setDrawMode(b.dataset.pmode));
 
   // --- predictions ---
   state.predict = store.read('predict', {}) || {};
   state.predictAt = store.read('predictAt', {}) || {};
-  const savedMode = store.read('predictMode', 'yours');
-  if (PRED_MODES.some(m => m.id === savedMode)) state.predictMode = savedMode;
+  const fromLink = new Set(state.subFromLink || []);
+  const savedMode = store.read('drawMode', 'results');
+  if (!fromLink.has('drawMode') && DRAW_MODES.includes(savedMode)) state.drawMode = savedMode;
   $('#predictClear').onclick = clearPicks;
   $('#predictCopy').onclick = copyAutoToPicks;
   $('#predictPng').onclick = e => exportPredictionsPng(e.currentTarget);
+
+  // --- starred matches ---
+  state.starred = new Set((store.read('starred', []) || []).map(String));
+  // Land on today during the tournament, on day one before it starts. Reading
+  // a whole week of fixtures at once is not what this view is for.
+  const today = new Date().toISOString().slice(0, 10);
+  state.matchDay = TMT.dates.includes(today) ? today : TMT.dates[0];
+  $('#starredOnly').checked = state.starredOnly;
+  $('#starredOnly').onchange = e => { state.starredOnly = e.target.checked; renderMatches(); };
+  $('#clearStars').onclick = clearStars;
 
   // Restore the discipline filter unless the URL already specified one.
   if (!/[?&#]c=/.test(location.hash)) {
     const saved = store.read('cats', null);
     if (Array.isArray(saved) && saved.length) {
       const valid = saved.filter(c => CATS.includes(c));
-      if (valid.length) { state.cats = new Set(valid); state.bracketCat = state.predictCat = valid[0]; }
+      if (valid.length) { state.cats = new Set(valid); state.drawCat = valid[0]; }
     }
   }
 
-  // Both map views show one draw at a time, and each remembers its own — your
+  // The Draw view shows one discipline at a time and remembers which — your
   // half-filled prediction sheet should still be there tomorrow. A link that
   // names disciplines wins, since that is what the sender meant to show.
   if (!state.catsFromLink) {
-    const bc = store.read('bracketCat', null);
-    const pc = store.read('predictCat', null);
-    if (CATS.includes(bc)) state.bracketCat = bc;
-    if (CATS.includes(pc)) state.predictCat = pc;
+    const dc = store.read('drawCat', null);
+    if (CATS.includes(dc)) state.drawCat = dc;
   }
-
-  $('#onlyMine').checked = state.onlyMine;
-  $('#onlyMine').onchange = e => { state.onlyMine = e.target.checked; renderSchedule(); };
+  const savedTab = store.read('playerTab', null);
+  if (!fromLink.has('playerTab') && PLAYER_TABS.includes(savedTab)) state.playerTab = savedTab;
+  setPlayerTab(state.playerTab);
 
   $('#openPickerBtn').onclick = openPicker;
   $('#openPickerBtn2').onclick = openPicker;
@@ -3181,24 +3376,27 @@ async function init() {
   };
   renderPresetPanel();
 
-  initBracketInteraction(MAPS.bracket);
-  initBracketInteraction(MAPS.predict);
-  initZoomBar(MAPS.bracket, { in: '#zoomIn', out: '#zoomOut', fit: '#zoomFit', mine: '#zoomMine' });
-  initZoomBar(MAPS.predict, { in: '#pZoomIn', out: '#pZoomOut', fit: '#pZoomFit', mine: '#pZoomMine' });
+  initBracketInteraction(CAM);
+  initZoomBar(CAM, { in: '#zoomIn', out: '#zoomOut', fit: '#zoomFit', mine: '#zoomMine' });
   initHotkeys();
 
   // Selections are shareable URLs, so honour back/forward and pasted links
   // arriving at an already-open page. syncHash() writes the same string we'd
   // read back, so compare first to avoid reacting to our own updates.
   window.addEventListener('hashchange', () => {
-    const snap = () => JSON.stringify(
-      [Array.from(state.selected).sort(), activeCats(), state.view]);
+    // The sub-selections are part of the snapshot: a pre-restructure link like
+    // v=predict resolves to the same top-level view as v=bracket, and differs
+    // only in the mode it asks for. Watching the view alone would read the new
+    // hash into state and then never repaint it.
+    const snap = () => JSON.stringify([Array.from(state.selected).sort(), activeCats(),
+                                       state.view, state.playerTab, state.drawMode]);
     const before = snap();
     readHash();
     if (before === snap()) return;
     store.write('players', Array.from(state.selected));
     store.write('cats', activeCats());
     paintCatChips();
+    setPlayerTab(state.playerTab);
     setView(state.view);
     ensureCats();
   });
@@ -3217,7 +3415,12 @@ async function init() {
       try { await loadDraw(c, 'low'); renderAll(); } catch { /* keep going */ }
     }
     // Then scheduling data: times, courts and scores, once BWF publishes them.
-    await loadAllDays(() => { if (state.view === 'schedule') renderSchedule(); })
+    // Both schedules gain times, courts and the court grid as each day lands.
+    await loadAllDays(() => {
+      if (state.view === 'matches' || (state.view === 'players' && state.playerTab === 'schedule')) {
+        renderAll();
+      }
+    })
       .catch(() => { /* schedule stays "time to be confirmed" */ });
   })();
 }

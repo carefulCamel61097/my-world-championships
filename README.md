@@ -36,7 +36,7 @@ gh api -X POST repos/<owner>/my-world-championships/pages \
 
 | File | Role |
 |---|---|
-| `index.html` | Page shell: top bar, discipline chips, both views, picker modal |
+| `index.html` | Page shell: top bar, discipline chips, the three views, picker modal |
 | `styles.css` | Two skins (BWF / SportsPort) x light + dark, via CSS custom properties |
 | `app.js` | Request queue + cache, draw parsing, bracket maths, rendering |
 
@@ -54,30 +54,65 @@ correct; they simply no longer decide the default.
 
 ### Views
 
+Three of them, each answering one question. The organising principle is **what you are
+selecting**: matches, players, or nothing at all.
+
+| View | Question | What it holds |
+|---|---|---|
+| **Follow Matches** | What's on, when, and on which court? | A day's order of play, everything dimmed. Star what's worth watching. |
+| **Follow Players** | How are the people I follow doing? | Sub-tabs: *Schedule* (their matches by day) and *Players* (the follow list + detail). |
+| **Draw** | What does the bracket look like — and who do I say wins? | One tree, four modes: *Results · Your predictions · By world ranking · By race ranking*. |
+
+**Follow Matches and Follow Players are deliberately independent.** Starring a match has
+nothing to do with the players you follow, and following a player never lights anything up
+in the matches view — no red names, no accent rails, no automatic stars. They are two
+separate ways of using the tool and mixing them makes both harder to read.
+
+
+**Bracket and Predictions used to be two views and are now one.** They were always the
+same tree — same geometry, same connectors, same pan and zoom — differing only in where
+the names came from. Merging them removes a tab and a near-duplicate renderer, and buys
+something neither had: flipping between what you predicted and what actually happened
+**keeps your zoom and your place on the draw**, because there is now one camera rather
+than two. The camera re-frames on a change of discipline, never on a change of mode.
+
+Links made before the restructure still work: `v=schedule` lands on Follow Players →
+Schedule, `v=bracket` on Draw → Results, `v=predict` on Draw → Your predictions. A link
+that names a sub-view beats the one you last had open, so a shared URL shows what the
+sender meant.
+
+
 The **discipline chips are independent on/off filters, all on by default** — not a
 single-choice switch. Following a men's singles player and a women's doubles pair shows
 both in one list, which is the point of a personal schedule. **All** turns everything back
 on; the last remaining discipline cannot be switched off, so the page is never empty. The
 choice persists and travels in the URL (`c=all`, or `c=ms,wd`).
 
-1. **Schedule** — the followed players' matches only, across every switched-on
-   discipline, grouped by day, with venue time, your local time, court, round, per-game
-   scores and duration. A day bar filters to one day or shows all. Once a day's order of
-   play is out it is laid out **as a court grid** — see below.
-2. **Players** — the follow list on the left, filtered to the switched-on disciplines;
-   the highlighted player's detail on the
-   right: photo, country, seed, BWF world ranking, career-high ranking, age, and the
-   **road through the draw** — each round as its own band, showing either the confirmed
-   match or every opponent they could still meet, **ordered by BWF world ranking** so the
-   dangerous ones come first.
-3. **Bracket** — the whole 63-match draw as one pannable, zoomable map, in the same shape
-   as the SportsPort tournament map: feeders on the left, Final on the right, elbow
-   connectors between. Followed players are outlined. *Fit* frames the entire draw;
-   *Jump to my player* zooms to a readable level and centres on them. Scrolling moves
-   the view (both axes); zooming is on the buttons, `+`/`−` and ctrl+wheel.
-   A bracket is one draw by definition, so this view keeps **its own MS/WS/MD/WD/XD
-   selector** in its toolbar, independent of the filter chips above.
-4. **Predictions** — the same tree, but you fill it in. See below.
+**Follow Matches** shows one day at a time — it opens on today during the tournament and
+on day one before it — with every match of the switched-on disciplines laid out by court
+and **dimmed**. Click a match to star it and it lights up: full-strength card, accent
+header, filled star. *Starred only* collapses the day to just those, keeping each one in
+its true position in the running order, so you can see at a glance when and on which
+court your evening is. Stars are kept in `localStorage`, keyed by match id (the `code` is
+only unique within one draw, so MS and WD would collide). In this view the head-to-head
+moves to a button of its own, because the card itself is the star toggle.
+
+**Follow Players → Schedule** is the old Schedule view: the followed players' matches
+only, across every switched-on discipline, grouped by day, with venue time, your local
+time, court, round, per-game scores and duration. Same court grid.
+**Follow Players → Players** is the follow list on the left, filtered to the switched-on
+disciplines, and the highlighted player's detail on the right: photo, country, seed, BWF
+world ranking, career-high ranking, age, and the **road through the draw** — each round as
+its own band, showing either the confirmed match or every opponent they could still meet,
+**ordered by BWF world ranking** so the dangerous ones come first.
+
+**Draw** is the whole 63-match draw as one pannable, zoomable map, in the same shape as
+the SportsPort tournament map: feeders on the left, Final on the right, elbow connectors
+between. Followed players are outlined. *Fit* frames the entire draw; *Jump to my player*
+centres on them. Scrolling moves the view (both axes); zooming is on the buttons, `+`/`−`
+and ctrl+wheel. A draw is one discipline by definition, so this view keeps **its own
+MS/WS/MD/WD/XD selector**, independent of the filter chips above. Its other three modes
+fill the same tree in from your picks or from a ranking — see *Predictions*.
 
 **Names on the bracket cards.** A card is 208px, which fits one full name but not two —
 a doubles pair was being cut off after the first player, so the second name was invisible.
@@ -93,9 +128,9 @@ empty. Those cards are drawn at full strength with a dashed border, and the empt
 reads *Bye* rather than an em-dash: that pair is already through to round two, which is
 information, not an inactive cell.
 
-**Zoom.** Both map views open each draw at **100%**, because a bracket scaled to fit is
-63 cards of unreadable text (*Fit* is one button away for the overview). The zoom only
-resets when you change discipline — tabbing to another view and back keeps where you
+**Zoom.** The Draw view opens each discipline at **100%**, because a bracket scaled to fit
+is 63 cards of unreadable text (*Fit* is one button away for the overview). The zoom resets
+only when you change discipline — changing mode, or tabbing away and back, keeps where you
 were looking.
 
 Each followed player has an **×** to stop following them. Removing one half of a doubles
@@ -276,10 +311,10 @@ Selections live in `localStorage` and in the URL hash
 
 | Key | Action |
 |---|---|
-| `←` `→` | Previous / next view (Schedule → Players → Bracket → Predictions, wrapping) |
-| `Shift` | Next discipline. In the Bracket and Predictions views it changes that view's own draw; elsewhere it shows one discipline at a time, cycling MS → WS → MD → WD → XD → all |
-| `↑` `↓` | Previous / next followed player (Players view only) |
-| `+` `−` | Zoom in / out (Bracket and Predictions views; main row **and** numpad) |
+| `←` `→` | Previous / next view (Follow Matches → Follow Players → Draw, wrapping) |
+| `Shift` | Next discipline. In the Draw view it changes the tree on screen; elsewhere it shows one discipline at a time, cycling MS → WS → MD → WD → XD → all |
+| `↑` `↓` | Previous / next followed player (Follow Players → Players only) |
+| `+` `−` | Zoom in / out (Draw view; main row **and** numpad) |
 | `0` | Reset to 100% (main row and numpad) |
 | `F` | Fit the whole draw to the viewport |
 | `Esc` | Close the head-to-head or the player picker |
@@ -288,10 +323,7 @@ Keys are ignored while typing in the search box and while a dialog is open. Zoom
 matched on `e.code` as well as `e.key`, so `NumpadAdd` / `NumpadSubtract` / `Numpad0` and
 the unshifted `=` / `-` / `0` keys all work regardless of keyboard layout.
 
-The Bracket and Predictions views are two independent maps: each keeps **its own zoom,
-pan and draw**, so framing one does not move the other.
-
-**Mouse in the Bracket and Predictions views:** the wheel and two-finger trackpad gestures **scroll** the
+**Mouse in the Draw view:** the wheel and two-finger trackpad gestures **scroll** the
 draw on both axes rather than zooming — a bracket this size is a map, and having to
 click-drag everywhere was the annoyance. `shift`+wheel scrolls horizontally for mice with
 no second axis. Zooming stays on the buttons, `+`/`−`, and **ctrl+wheel** — which is also
@@ -710,11 +742,14 @@ browser, which is a much bigger commitment.
 9. ✅ Full bracket map view with pan/zoom.
 10. ✅ Keyboard navigation, including bracket zoom.
 11. ✅ Season results strip, in the Players view and both sides of every head-to-head.
-12. ✅ Predictions view: pick every match, winners carry up the draw, scored against real
+12. ✅ Predictions: pick every match, winners carry up the draw, scored against real
     results, with ranking-derived brackets and PNG export.
-13. ⬜ Recent form strip (`vue-player-match-previous` is already fetched, not yet shown).
-14. ⬜ Calendar (`.ics`) export.
-15. ⬜ Elo — not planned; badmintonranks is off the table by choice.
+13. ✅ Order of play as a court grid, once BWF publishes it.
+14. ✅ Restructured to three views: Follow Matches (star what's worth watching),
+    Follow Players (schedule + detail), Draw (results and predictions in one tree).
+15. ⬜ Recent form strip (`vue-player-match-previous` is already fetched, not yet shown).
+16. ⬜ Calendar (`.ics`) export.
+17. ⬜ Elo — not planned; badmintonranks is off the table by choice.
 
 ### Verified against live data
 
@@ -766,6 +801,15 @@ browser, which is a much bigger commitment.
   and the cards are undimmed with the empty half reading *Bye*.
 - Zoom: a fresh discipline opens at 100%, re-clicking the discipline you are already on
   keeps your zoom, tabbing away and back keeps it, and changing discipline resets it.
+- The restructure end-to-end: three views and no orphan sections; Follow Matches opens on
+  a day with all 64 cards dimmed and none starred; a click lights exactly one and dims the
+  other 63, persists it, and updates both counters; the head-to-head button opens without
+  starring; *Starred only* narrows to the starred set; *Clear* empties and disables itself.
+  Following eight players lights up nothing in Follow Matches — no names, no rails, no
+  stars — while the same selection does highlight in Follow Players. Draw shows one canvas,
+  one viewport and one zoom bar, and switching Results → Predictions holds the **exact**
+  transform, not just the zoom percentage. `v=schedule` / `v=bracket` / `v=predict` still
+  land on the right view *and* sub-view.
 - Semi-final routes: four routes, four distinct colours, each contiguous with exactly one
   cell per column down to the entry round, and every highlighted half verified to hold
   that player. The forward extension is checked against reality too — both finalists carry
