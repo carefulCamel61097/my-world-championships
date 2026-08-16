@@ -291,15 +291,24 @@ function surnameOf(nameDisplay) {
 }
 
 /**
- * Name for the small bracket and prediction cards. A doubles pair does not fit
- * at 208px — the second player was being cut off entirely — so pairs show both
- * surnames. Singles are left alone, and so is every wider surface (schedule,
- * player panel, head-to-head), which has room for the full names.
+ * How a team is written wherever it is displayed. A doubles pair is always
+ * "SURNAME / SURNAME" — two full names is a lot of text for what is really one
+ * competitor, and it stopped fitting anywhere long before the bracket cards
+ * did. Singles keep their full name.
+ *
+ * teamName() is still the full form, and is what search matches against and
+ * what tooltips reveal, so nothing is actually lost.
  */
 function cardName(team) {
   if (!team || !team.players || !team.players.length) return 'TBD';
   if (team.players.length < 2) return teamName(team);
   return team.players.map(p => surnameOf(p.nameDisplay)).join(' / ');
+}
+
+/** One player's name as displayed inside a team: surname if it is a pair. */
+function playerNameIn(team, p) {
+  return team && team.players && team.players.length > 1
+    ? surnameOf(p.nameDisplay) : p.nameDisplay;
 }
 
 /** Draw entry → the team shape openH2H() and teamName() expect. */
@@ -447,7 +456,11 @@ async function loadDraw(cat, priority) {
         countryCode: t.countryCode,
         flag: t.countryFlagUrl,
         seed: side === 'team1' ? m.team1seed : m.team2seed,
+        // `name` is the full form and is what search matches against; `short`
+        // is what gets displayed. A pair searchable only by surname would be
+        // maddening when you know the given name.
         name: teamName(t),
+        short: cardName(t),
         bye: isBye,
       });
     }
@@ -717,9 +730,13 @@ function sideRow(m, which, opts) {
     return `<b class="${own > opp ? 'won' : ''}">${esc(own)}</b>`;
   }).join('');
 
+  // Per player rather than via cardName(), because each half of a pair carries
+  // its own "one of mine" highlight.
   const names = team && team.players && team.players.length
-    ? team.players.map(p => `<span class="${usePlayers && state.selected.has(String(p.id)) ? 'mine' : ''}">${esc(p.nameDisplay)}</span>`).join(' / ')
+    ? team.players.map(p => `<span class="${usePlayers && state.selected.has(String(p.id)) ? 'mine' : ''}">${
+        esc(playerNameIn(team, p))}</span>`).join(' / ')
     : '<span class="muted">TBD</span>';
+  const full = team && team.players && team.players.length > 1 ? ` title="${esc(teamName(team))}"` : '';
 
   const cls = ['side', isWin ? 'is-winner' : '', isLose ? 'is-loser' : '', mine ? 'is-mine' : ''].join(' ');
 
@@ -727,7 +744,7 @@ function sideRow(m, which, opts) {
     <div class="${cls}">
       ${flagImg(team && team.countryFlagUrl, team && team.countryCode)}
       <span class="seed">${esc(seedText(seed))}</span>
-      <span class="nm">${names}<small class="sub">${esc((team && team.countryCode) || '')}</small></span>
+      <span class="nm"${full}>${names}<small class="sub">${esc((team && team.countryCode) || '')}</small></span>
       <span class="sets">${scores}</span>
     </div>`;
 }
@@ -2683,7 +2700,10 @@ async function exportPredictionsPng(btn) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `wc2026-${cat}-predictions-${(made || new Date().toISOString()).slice(0, 10)}.png`;
+    // todayIso, not the ISO string's own first ten characters: that is the UTC
+    // date, so a sheet filled in late one evening in Europe would be captioned
+    // with one day inside the image and filed under the previous one.
+    a.download = `wc2026-${cat}-predictions-${todayIso(made ? new Date(made) : new Date())}.png`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -2753,15 +2773,19 @@ function h2hSide(team, side) {
          ? `<img class="av av-flag" src="${esc(flag)}" alt="${esc(team.countryCode || '')}">`
          : '<span class="av"></span>'}</span>`;
 
+  // Surnames for a pair here too, with the full names on hover.
+  const short = cardName(team), full = teamName(team);
   return `<div class="h2h-p ${side}">${art}
-    <span class="nm2">${esc(teamName(team))}<small>${esc(team.countryCode || '')}</small></span></div>`;
+    <span class="nm2"${short !== full ? ` title="${esc(full)}"` : ''}>${esc(short)}<small>${
+      esc(team.countryCode || '')}</small></span></div>`;
 }
 
 async function openH2H(teamA, teamB) {
   if (!teamA || !teamB || !(teamA.players || []).length || !(teamB.players || []).length) return;
 
   const box = $('#h2hBody');
-  $('#h2hTitle').textContent = `${teamName(teamA)} vs ${teamName(teamB)}`;
+  $('#h2hTitle').textContent = `${cardName(teamA)} vs ${cardName(teamB)}`;
+  $('#h2hTitle').title = `${teamName(teamA)} vs ${teamName(teamB)}`;
   $('#h2h').hidden = false;
   box.innerHTML = `<div class="h2h-head">${h2hSide(teamA, 'left')}
       <div class="h2h-tally"><span class="spinner"></span><small>loading</small></div>
@@ -2793,7 +2817,7 @@ async function openH2H(teamA, teamB) {
     const games = (prog.games || []).map(g =>
       `<span class="g"><i class="${g.team1 > g.team2 ? 'w' : ''}">${esc(g.team1)}</i>-<i class="${g.team2 > g.team1 ? 'w' : ''}">${esc(g.team2)}</i></span>`
     ).join('');
-    const who = res.winner === 1 ? teamName(teamA) : res.winner === 2 ? teamName(teamB) : null;
+    const who = res.winner === 1 ? cardName(teamA) : res.winner === 2 ? cardName(teamB) : null;
     const tmt = (m.tournament && m.tournament.name) || info.eventName || '';
     return `<div class="h2h-m">
         <span class="when">${esc(when)}</span>
@@ -3085,7 +3109,8 @@ function renderPicker() {
       if (sa !== sb) return sa - sb;
       const ca = CATS.indexOf(a.cat), cb = CATS.indexOf(b.cat);
       if (ca !== cb) return ca - cb;
-      return a.name.localeCompare(b.name);
+      // Ordered by what is on screen, so the list reads alphabetically.
+      return (a.short || a.name).localeCompare(b.short || b.name);
     });
 
   for (const e of entries) {
@@ -3093,7 +3118,7 @@ function renderPicker() {
     const row = el('div', 'pk' + (on ? ' is-on' : ''));
     row.innerHTML = `
       ${flagImg(e.flag, e.countryCode)}
-      <span class="pk-nm">${esc(e.name)}<small><b class="pk-cat">${esc(e.cat.toUpperCase())}</b>
+      <span class="pk-nm"${e.short !== e.name ? ` title="${esc(e.name)}"` : ''}>${esc(e.short || e.name)}<small><b class="pk-cat">${esc(e.cat.toUpperCase())}</b>
         ${esc(e.countryCode || '')}${
         e.seed ? ' &middot; seed ' + esc(seedText(e.seed)) : ''}</small></span>
       <span class="pk-add">${on ? 'Following' : 'Follow'}</span>`;

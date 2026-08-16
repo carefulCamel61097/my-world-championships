@@ -135,14 +135,20 @@ and ctrl+wheel. A draw is one discipline by definition, so this view keeps **its
 MS/WS/MD/WD/XD selector**, independent of the filter chips above. Its other three modes
 fill the same tree in from your picks or from a ranking — see *Predictions*.
 
-**Names on the bracket cards.** A card is 208px, which fits one full name but not two —
-a doubles pair was being cut off after the first player, so the second name was invisible.
-Bracket and Predictions cards therefore show **surnames only for pairs** (`GICQUEL /
-DELRUE`, `LIU / TAN`); singles are untouched, and so is every wider surface — the
-schedule, the player panel and the head-to-head all keep full names. Hovering a card
-gives the full pair. BWF capitalises the family name, which is what `surnameOf()` keys
-on; see [Verified against live data](#verified-against-live-data) for how the awkward
-cases are handled.
+**A doubles pair is always written `SURNAME / SURNAME`** — `GICQUEL / DELRUE`,
+`LIU / TAN` — everywhere it is named: match cards, the court grid, the player picker, the
+head-to-head, the bracket, the prediction sheet and the PNG. Two full names is a lot of
+text for what is really one competitor, and it stopped fitting long before the 208px
+bracket cards did. Singles keep their full name.
+
+Nothing is lost. The full form is still what **search matches against**, so the picker
+finds `Delphine` as happily as `DELRUE`, and it is what **hover reveals** on any shortened
+name. Individual players are still named in full where they appear as people rather than
+as half of a pair — the follow list and the player detail panel.
+
+BWF capitalises the family name, which is what `surnameOf()` keys on; see
+[Verified against live data](#verified-against-live-data) for how the awkward cases are
+handled.
 
 **Byes.** In doubles, 48 pairs enter a 64 draw, so 16 first-round cells have one side
 empty. Those cards are drawn at full strength with a dashed border, and the empty half
@@ -230,7 +236,9 @@ went out in the last 16, your final pick is simply wrong, which is how a predict
 bracket is supposed to work.
 
 **Save PNG** exports the sheet as an image, stamped with the date the predictions were
-made (not the date of the export). It is drawn onto a canvas by hand rather than by
+made (not the date of the export), in the viewer's own timezone — both in the caption and
+in the filename, which used to disagree by a day for anyone east of Greenwich filling in a
+sheet late in the evening. It is drawn onto a canvas by hand rather than by
 rasterising the DOM, which would need a library — this repo has no build step and loads
 nothing from a CDN. Flags are fetched with `crossOrigin="anonymous"`; if BWF's image host
 ever stops sending the CORS header the flag is skipped rather than tainting the canvas
@@ -810,6 +818,10 @@ browser, which is a much bigger commitment.
   which are the ones at risk in a quarter-width column).
 - No 12-hour times survive anywhere in the cards, including BWF's own `oopText`; follow-on
   times are marked ≈ and the first match on a court is not.
+- Surnames everywhere, checked in the browser: the picker shows `GICQUEL / DELRUE` and
+  still finds it by searching `delphine`; a schedule card shows the pair by surname with
+  the full names on hover while a singles card keeps `SHI Yu Qi` and needs no tooltip; the
+  head-to-head title and both side headers use surnames and each reveals its full pair.
 - `surnameOf()` unit-tested against **all 416 entrants** in the five draws. 400 have
   exactly one all-caps token; the rest are covered explicitly — compound surnames
   (`Kelly VAN BUITEN` → VAN BUITEN, `Nour AHMED YOUSSRI`, `Serena AU YEONG`), initials
