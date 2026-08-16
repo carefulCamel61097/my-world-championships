@@ -68,6 +68,15 @@ nothing to do with the players you follow, and following a player never lights a
 in the matches view — no red names, no accent rails, no automatic stars. They are two
 separate ways of using the tool and mixing them makes both harder to read.
 
+There is exactly one bridge between them, and it is a button rather than a rule:
+**Add *n* to Follow Matches**, in Follow Players → Schedule. It stars whatever that
+schedule is currently showing — day filter and discipline chips included — so tomorrow's
+fixtures for the players you follow light up without re-picking them one card at a time.
+The count is what would actually change, so it reads `Add 4` when two of the six are
+already starred; once everything on screen is starred it flips to **Remove *n* from Follow
+Matches**, because a button that would do nothing is worse than one that offers the way
+back. A star still only ever gets set by something you clicked.
+
 
 **Bracket and Predictions used to be two views and are now one.** They were always the
 same tree — same geometry, same connectors, same pan and zoom — differing only in where
@@ -815,6 +824,9 @@ browser, which is a much bigger commitment.
   one viewport and one zoom bar, and switching Results → Predictions holds the **exact**
   transform, not just the zoom percentage. `v=schedule` / `v=bracket` / `v=predict` still
   land on the right view *and* sub-view.
+- The schedule → stars bridge: the button offers exactly what is on screen, starring them
+  persists and lights precisely those matches in Follow Matches and nothing else, and the
+  button then flips to Remove and takes them all back out again.
 - Semi-final routes: four routes, four distinct colours, each contiguous with exactly one
   cell per column down to the entry round, and every highlighted half verified to hold
   that player. The forward extension is checked against reality too — both finalists carry

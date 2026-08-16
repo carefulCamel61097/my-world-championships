@@ -955,6 +955,55 @@ function renderDayGroups(matches, wrap, cardOpts) {
   }
 }
 
+/** Exactly what Follow Players → Schedule is showing, day filter included. */
+function myScheduleMatches() {
+  if (!state.selected.size) return [];
+  let ms = allMatches().filter(matchIsMine);
+  if (state.day !== 'all') ms = ms.filter(m => dayKeyOf(m) === state.day);
+  return ms;
+}
+
+/**
+ * The one bridge between the two halves of the tool: take the matches this
+ * schedule is showing and star them, so tomorrow's fixtures for the players you
+ * follow light up in Follow Matches without re-picking them by hand.
+ *
+ * Deliberately a button rather than automatic. A star still means "I chose
+ * this" — it just does not have to be chosen one card at a time.
+ */
+function paintAddToStars() {
+  const btn = $('#addToStars');
+  if (!btn) return;
+  const shown = myScheduleMatches();
+  if (!shown.length) { btn.hidden = true; return; }
+
+  const missing = shown.filter(m => !isStarred(m));
+  btn.hidden = false;
+  if (missing.length) {
+    btn.dataset.act = 'add';
+    btn.textContent = `Add ${missing.length} to Follow Matches`;
+    btn.title = 'Star these matches so they light up in Follow Matches';
+  } else {
+    // Everything on screen is already starred, so offer the way back out
+    // rather than leaving a button that would do nothing.
+    btn.dataset.act = 'remove';
+    btn.textContent = `Remove ${shown.length} from Follow Matches`;
+    btn.title = 'Un-star these matches';
+  }
+}
+
+function addScheduleToStars() {
+  const shown = myScheduleMatches();
+  if (!shown.length) return;
+  const remove = $('#addToStars').dataset.act === 'remove';
+  for (const m of shown) {
+    if (remove) state.starred.delete(String(m.id));
+    else state.starred.add(String(m.id));
+  }
+  persistStars();
+  paintAddToStars();
+}
+
 /** Follow Players → Schedule: the matches of the players you follow. */
 function renderSchedule() {
   const wrap = $('#scheduleList');
@@ -962,6 +1011,7 @@ function renderSchedule() {
   const cats = activeCats();
   const loaded = cats.filter(c => state.draws[c]);
   wrap.innerHTML = '';
+  paintAddToStars();
 
   if (!loaded.length) {
     wrap.appendChild(el('div', 'status', '<span class="spinner"></span>Loading the draws&hellip;'));
@@ -980,8 +1030,7 @@ function renderSchedule() {
     return;
   }
 
-  let matches = allMatches().filter(matchIsMine);
-  if (state.day !== 'all') matches = matches.filter(m => dayKeyOf(m) === state.day);
+  const matches = myScheduleMatches();
 
   if (!matches.length) {
     const label = cats.length === CATS.length ? 'matches'
@@ -3325,6 +3374,7 @@ async function init() {
   $('#starredOnly').checked = state.starredOnly;
   $('#starredOnly').onchange = e => { state.starredOnly = e.target.checked; renderMatches(); };
   $('#clearStars').onclick = clearStars;
+  $('#addToStars').onclick = addScheduleToStars;
 
   // Restore the discipline filter unless the URL already specified one.
   if (!/[?&#]c=/.test(location.hash)) {
