@@ -32,6 +32,7 @@
   --live:          #12ffc4;
   --warn:          #ffbc20;
   --win:           #12ffc4;
+  --bad:       #ff6b6b;
 
   --radius-card:   4px;
   --radius-btn:    3px;
@@ -66,6 +67,7 @@
   --live:          #00ff80;
   --warn:          #ffcc00;
   --win:           #00ff80;
+  --bad:       #ff7a7a;
 
   --radius-card:   12px;
   --radius-btn:    8px;
@@ -91,6 +93,7 @@
     --accent-text:  #df2027;
     --live:         #00b331;
     --win:          #00b331;
+    --bad:       #c62828;
     --shadow:       0 1px 3px rgba(0,0,0,.14);
   }
   :root[data-skin="sport"]:not([data-mode="dark"]) {
@@ -109,6 +112,7 @@
     --accent-text:  #d96a00;
     --live:         #00a352;
     --win:          #00a352;
+    --bad:       #c62828;
     --shadow:       0 1px 3px rgba(0,0,0,.12);
   }
 }
@@ -128,6 +132,7 @@
   --accent-text:  #df2027;
   --live:         #00b331;
   --win:          #00b331;
+  --bad:       #c62828;
   --shadow:       0 1px 3px rgba(0,0,0,.14);
 }
 :root[data-skin="sport"][data-mode="light"] {
@@ -146,6 +151,7 @@
   --accent-text:  #d96a00;
   --live:         #00a352;
   --win:          #00a352;
+  --bad:       #c62828;
   --shadow:       0 1px 3px rgba(0,0,0,.12);
 }
 
@@ -485,6 +491,11 @@ a { color: var(--accent-text); }
 .oop-grid .match { margin-bottom: 0; }
 /* The column already names the court. */
 .oop-grid .match-head .court { display: none; }
+/* A finished match carries up to five game scores, and at a quarter of the
+   width those badges were squeezing the name into a second line. Tighter here
+   only — the single-column schedule has room for the full-size ones. */
+.oop-grid .sets { gap: 2px; }
+.oop-grid .sets b { min-width: 18px; font-size: 12px; padding: 1px 2px; }
 
 @media (max-width: 899px) {
   .oop-grid { display: block; }
@@ -563,8 +574,10 @@ a { color: var(--accent-text); }
 .seed { font-size: 11px; color: var(--text-muted); text-align: center; font-weight: 700; }
 /* Deliberately allowed to wrap. In a four-column court grid a doubles pair is
    wider than the column, and wrapping to a second line costs a few pixels
-   whereas an ellipsis would hide half the pair. */
-.nm { min-width: 0; font-size: 13.5px; line-height: 1.25; }
+   whereas an ellipsis would hide half the pair. `anywhere` because some single
+   names — ONGBAMRUNGPHAN, CHAROENKITAMORN — are themselves wider than the
+   column and have no space to break at, so without it they simply overflow. */
+.nm { min-width: 0; font-size: 13.5px; line-height: 1.25; overflow-wrap: anywhere; }
 /* The country rode on its own line under the name, costing a whole line per
    side for something the flag beside it already says. Inline instead. */
 .nm .sub { font-size: 11px; color: var(--text-muted); margin-left: 5px; }
@@ -930,10 +943,22 @@ a { color: var(--accent-text); }
 .pnode:not(.is-locked):hover { border-color: var(--accent); z-index: 3; }
 .pnode.is-mine { border-color: var(--accent); border-left-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .pnode.is-bye { border-style: dashed; }
-/* Scored against what actually happened — the rail alone, so the card itself
-   still reads as your prediction rather than as a result. */
+/* Scored against what actually happened. The card still reads as your
+   prediction — the tree is not rewritten — but the verdict has to be legible
+   from across the draw, so it is a coloured rail *and* a mark on the badge. */
 .pnode.is-hit  { border-left-color: var(--win); }
-.pnode.is-miss { border-left-color: var(--accent); }
+.pnode.is-miss { border-left-color: var(--bad); }
+.pnode.is-hit  .pnode-side.is-pick { background: color-mix(in srgb, var(--win) 12%, transparent); }
+.pnode.is-miss .pnode-side.is-pick { background: color-mix(in srgb, var(--bad) 14%, transparent); }
+
+/* The W on the side you backed becomes the verdict once the match is played. */
+.pnode-side.is-pick .pw.is-hit {
+  background: var(--win); border-color: var(--win); color: #06251c;
+}
+.pnode-side.is-pick .pw.is-miss {
+  background: var(--bad); border-color: var(--bad); color: #fff;
+}
+:root[data-mode="light"] .pnode-side.is-pick .pw.is-hit { color: #fff; }
 
 .pnode-side {
   display: grid; grid-template-columns: 16px 18px 1fr 22px;

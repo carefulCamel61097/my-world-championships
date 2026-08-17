@@ -228,12 +228,25 @@ Entries outside the pages walked from the ranking table fall back to the tournam
 seeding, and a genuine dead heat keeps the top side — arbitrary, but stable, so the
 bracket never flickers between renders.
 
-**Scoring.** Once BWF publishes results, each card is marked against reality: the left
-rail turns green if your pick actually won that match and red if it did not, and the
-readout adds `12/16 right so far`. Real results are deliberately **not** merged into the
-tree — the cards keep showing who *you* said would be there. If your predicted finalist
-went out in the last 16, your final pick is simply wrong, which is how a prediction
-bracket is supposed to work.
+**Scoring.** Once BWF publishes results, each card is marked against reality. On the side
+you backed the **W becomes a verdict** — a green ✓ if that is who won, a red ✗ if it is
+not — with a matching tint across that half of the card and a coloured left rail, so how
+you are doing reads from across the draw rather than out of a hairline. Hovering a wrong
+pick names who actually won. The readout adds `5/6 right so far`, and the ✓/✗ carry into
+the PNG, so a sheet saved mid-tournament shows how it is going rather than only what was
+predicted.
+
+"Wrong" gets its own `--bad` token rather than reusing the accent: on the BWF skin the
+accent *is* red, and a red mark among red seeds and red badges says nothing.
+
+The denominator counts matches that have been **played and predicted**. Counting every
+played match would report `1/6 right` on a part-filled sheet, implying five wrong answers
+where five were simply never answered.
+
+Real results are deliberately **not** merged into the tree — the cards keep showing who
+*you* said would be there, so a wrong pick still carries your player forward. If your
+predicted finalist went out in the last 16, your final pick is simply wrong, which is how
+a prediction bracket is supposed to work.
 
 **Save PNG** exports the sheet as an image, stamped with the date the predictions were
 made (not the date of the export), in the viewer's own timezone — both in the caption and
@@ -843,6 +856,15 @@ browser, which is a much bigger commitment.
   one viewport and one zoom bar, and switching Results → Predictions holds the **exact**
   transform, not just the zoom percentage. `v=schedule` / `v=bracket` / `v=predict` still
   land on the right view *and* sub-view.
+- Verdicts checked against **live results** on day one: backing the actual winner of one
+  decided match and the loser of another produces exactly one ✓ card and one ✗ card, both
+  marks land on the side that was backed, the cross names who really won, and the tally
+  reads `1/2 right so far` — not `1/6`, because the other four played matches were never
+  predicted.
+- Card heights measured for played and unplayed separately, since a finished card also
+  carries game scores: a player row is 27px against the old 47px, and a full-width card is
+  106px against the old ~160px. No name overflows its column, including single unbroken
+  surnames like ONGBAMRUNGPHAN that are wider than a quarter-width column.
 - Day selection checked live on a tournament day: both bars open on today, the bar shows
   it selected, a date outside the week is not treated as one, and `todayIso()` resolves
   00:30 CEST on 17 Aug to the 17th where UTC would have said the 16th.

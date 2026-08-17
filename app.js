@@ -2050,16 +2050,19 @@ function resolvePredictions(draw, mode) {
       winner[k] = w;
 
       // Score against what actually happened, whoever we thought would be here.
+      // `decided` counts matches that have been played *and* predicted: a half
+      // filled sheet reading "1/6 right" would suggest five wrong answers when
+      // five were simply never answered.
       if (!isBye && m && (m.winner === 1 || m.winner === 2)) {
         const real = entryKey(m['team' + m.winner]);
         if (real) {
-          decided++;
+          verdict[k + ':real'] = real;
           if (w) {
+            decided++;
             const right = entryKey(w) === real;
             verdict[k] = right ? 'hit' : 'miss';
             if (right) hits++;
           }
-          verdict[k + ':real'] = real;
         }
       }
     }
@@ -2090,13 +2093,22 @@ function predSide(m, t, which, isBye, res) {
   // seed is looked up from the entry rather than from the (empty) draw cell.
   const seedShown = seed || (res.seedOf ? res.seedOf(t) : '');
 
+  // Once the match has actually been played, the W on the side you backed turns
+  // into a verdict: ✓ if that is who won, ✗ if it is not. The other side keeps
+  // its W, because the point of the card is still what *you* said.
+  const verdict = res.picked === which ? res.verdict : null;
+  const badge = verdict === 'hit'
+    ? `<span class="pw is-hit" title="Right — this is who won">&#10003;</span>`
+    : verdict === 'miss'
+      ? `<span class="pw is-miss" title="${esc(res.reallyWon ? 'Wrong — ' + res.reallyWon + ' won this' : 'Wrong')}">&#10007;</span>`
+      : `<span class="pw" title="Pick to win">W</span>`;
+
   return `<div class="${cls}" data-side="${which}">
     ${t && t.countryFlagUrl ? `<img src="${esc(t.countryFlagUrl)}" alt="" loading="lazy">` : '<span></span>'}
     <span class="bs">${esc(seedText(seedShown))}</span>
     <span class="bn">${named ? esc(cardName(t))
       : `<span class="muted">${isBye ? 'Bye' : '&mdash;'}</span>`}</span>
-    ${isBye || !named ? '<span class="pw is-void"></span>'
-                      : `<span class="pw" title="Pick to win">W</span>`}
+    ${isBye || !named ? '<span class="pw is-void"></span>' : badge}
   </div>`;
 }
 
@@ -2190,14 +2202,17 @@ function renderPredict() {
       node.style.cssText =
         `left:${ox + brLeft(c)}px;top:${oy + brCentre(c, r) - BR.CARD_H / 2}px;` +
         `width:${BR.CARD_W}px;height:${BR.CARD_H}px`;
-      node.innerHTML = predSide(c === 0 ? m : null, t1, 1, isBye, { picked, seedOf })
-                     + predSide(c === 0 ? m : null, t2, 2, isBye, { picked, seedOf });
+      const realKey = res.verdict[k + ':real'];
+      const reallyWon = realKey
+        ? cardName([m.team1, m.team2].find(t => entryKey(t) === realKey)) : null;
+      const sideOpts = { picked, seedOf, verdict: mark, reallyWon };
+      node.innerHTML = predSide(c === 0 ? m : null, t1, 1, isBye, sideOpts)
+                     + predSide(c === 0 ? m : null, t2, 2, isBye, sideOpts);
 
       // Doubles cards show surnames only, so the full pairs live on the tooltip.
       const full = entryKey(t1) && entryKey(t2)
         ? `${teamName(t1)}  v  ${teamName(t2)}` : '';
       if (mark) {
-        const realKey = res.verdict[k + ':real'];
         const realTeam = [m.team1, m.team2].find(t => entryKey(t) === realKey);
         node.title = (full ? full + '\n' : '') +
           (mark === 'hit' ? 'Right — ' : 'Wrong — ') + teamName(realTeam) + ' won this';
@@ -2486,6 +2501,7 @@ async function exportPredictionsPng(btn) {
       muted: cssVar('--text-muted') || '#888',
       accent: cssVar('--accent') || '#df2027', accentFg: cssVar('--accent-fg') || '#fff',
       accentText: cssVar('--accent-text') || '#ff5f64',
+      win: cssVar('--win') || '#12ffc4', bad: cssVar('--bad') || '#ff6b6b',
     };
 
     ctx.fillStyle = C.bg;
@@ -2543,7 +2559,7 @@ async function exportPredictionsPng(btn) {
     }
     await Promise.all(Array.from(flags).map(loadFlag));
 
-    const drawSide = (t, x, y, seed, picked, dimmed, bye) => {
+    const drawSide = (t, x, y, seed, picked, dimmed, bye, verdict) => {
       const cx = x + 9;
       // BWF fills the empty half of a bye with a players-less team object, so
       // "is there a team here" has to be entryKey, not truthiness.
@@ -2569,12 +2585,20 @@ async function exportPredictionsPng(btn) {
       ctx.fillText(fitText(ctx, named ? cardName(t) : (bye ? 'Bye' : '—'), nameMax),
         nameX, y + BR.CARD_H / 4 + 4);
       if (named) {
+        // Once a match has been played the badge on the backed side becomes the
+        // verdict, so an exported sheet shows how it is going, not just what
+        // was predicted.
+        const mark = picked && verdict ? verdict : null;
         const bx = x + BR.CARD_W - 22, by = y + BR.CARD_H / 4 - 7;
-        ctx.fillStyle = picked ? C.accent : 'transparent';
-        if (picked) { ctx.fillRect(bx, by, 15, 14); }
-        ctx.fillStyle = picked ? C.accentFg : C.muted;
+        if (picked) {
+          ctx.fillStyle = mark === 'hit' ? C.win : mark === 'miss' ? C.bad : C.accent;
+          ctx.fillRect(bx, by, 15, 14);
+        }
+        ctx.fillStyle = !picked ? C.muted
+          : mark === 'hit' ? '#06251c' : mark === 'miss' ? '#ffffff' : C.accentFg;
         ctx.font = `700 9.5px ${font}`;
-        ctx.fillText('W', bx + 4, by + 10.5);
+        ctx.fillText(mark === 'hit' ? '✓' : mark === 'miss' ? '✗' : 'W',
+          bx + (mark ? 3.5 : 4), by + 10.5);
       }
       ctx.globalAlpha = 1;
     };
@@ -2637,8 +2661,9 @@ async function exportPredictionsPng(btn) {
           const e = draw.entries.get(entryKey(t));
           return e ? e.seed : '';
         };
-        drawSide(t1, x, y, seedOf(t1), p1, !!win && !p1, isBye);
-        drawSide(t2, x, y + BR.CARD_H / 2, seedOf(t2), p2, !!win && !p2, isBye);
+        const verdict = res.verdict[k];
+        drawSide(t1, x, y, seedOf(t1), p1, !!win && !p1, isBye, verdict);
+        drawSide(t2, x, y + BR.CARD_H / 2, seedOf(t2), p2, !!win && !p2, isBye, verdict);
       }
     }
 
