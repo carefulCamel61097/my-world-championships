@@ -17,7 +17,21 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 8776, DBG = 9344;
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const TYPES = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css' };
-const DAY = '2026-08-17';
+
+// Two different days, and the distinction is the whole reason this suite kept
+// breaking. POLL_DAY is what the timer goes after: today, or nothing outside
+// the week. DAY is the day the fixture is changed under the page — pinned to
+// day one, because that is the only date guaranteed to have a real order of
+// play recorded. Depending on "today" made this a test of whether BWF had
+// published a schedule yet, and it went red at midnight on its first night.
+const TMT_DATES = ['2026-08-17','2026-08-18','2026-08-19','2026-08-20',
+                   '2026-08-21','2026-08-22','2026-08-23'];
+const p2 = n => String(n).padStart(2, '0');
+const now = new Date();
+const TODAY = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`;
+const IN_WEEK = TMT_DATES.includes(TODAY);
+const POLL_DAY = IN_WEEK ? TODAY : null;
+const DAY = TMT_DATES[0];
 
 const server = http.createServer((req, res) => {
   const rel = decodeURIComponent(req.url.split('?')[0].split('#')[0]);
@@ -127,17 +141,21 @@ const idle = await ev(`({
 })`);
 console.log(' ', JSON.stringify(idle));
 check('live button is in the topbar', idle.present);
-// This suite is meaningless outside the tournament week: the poll is supposed
-// to stand down when nothing is playing.
-check('polling is armed during the week', idle.on && idle.day === DAY, idle.day + '');
+// In the week the poll is armed on today; outside it, standing down *is* the
+// behaviour under test, so assert that instead of skipping.
+check(IN_WEEK ? 'polling is armed on today' : 'polling stands down out of week',
+  IN_WEEK ? (idle.on && idle.day === POLL_DAY) : (!idle.on && idle.day === null),
+  `${idle.day} / on=${idle.on}`);
 check('interval is running', idle.timer);
-check('reads "Live" before the first check', idle.label === 'Live', idle.label);
+check(`reads "${IN_WEEK ? 'Live' : 'Refresh'}" before the first check`,
+  idle.label === (IN_WEEK ? 'Live' : 'Refresh'), idle.label);
 
 // From here the suite drives every refresh by hand: a 90-second interval firing
 // in the middle of a timing assertion is a flake waiting to happen.
 await ev('clearInterval(liveTimer)');
 
 console.log('\n=== a hidden tab does not poll ===');
+if (!IN_WEEK) console.log('  (out of week — the timer would stand down anyway)');
 const hidden = await ev(`(async () => {
   Object.defineProperty(document, 'hidden', { get: () => true, configurable: true });
   await refreshLive();
@@ -149,6 +167,10 @@ const hidden = await ev(`(async () => {
 check('no fetch while the tab is in the background', hidden === 0, 'liveAt=' + hidden);
 
 console.log('\n=== a refresh that finds something ===');
+// Look at day one, so the forced refresh takes it in as the day on screen and
+// the changed card is actually rendered.
+await ev(`(() => { state.matchDay = '${DAY}';
+  renderDaybar('#mDaybar', state.matchDay, pickMatchDay); renderMatches(); })()`);
 const news = await ev(`(async () => { await refreshLive(true); return {
   news: liveNews, at: liveAt,
   label: document.querySelector('#liveLabel').textContent,

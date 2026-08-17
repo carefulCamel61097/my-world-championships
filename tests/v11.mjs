@@ -114,13 +114,21 @@ console.log(' ', JSON.stringify(days));
 check('today really is a tournament day (so this is a live check)', days.inWeek === true, days.today);
 check('Follow Matches opens on today', days.matchDay === days.today, `${days.matchDay} vs ${days.today}`);
 check('Follow Players → Schedule opens on today too', days.day === days.today, `${days.day} vs ${days.today}`);
-check('and the day bar shows it selected', /17/.test(days.matchBar || ''), String(days.matchBar));
+check('and the day bar shows it selected',
+  new RegExp(String(Number(days.today.slice(8, 10)))).test(days.matchBar || ''),
+  `${days.matchBar} for ${days.today}`);
 check('local midnight resolves to the local day, not the UTC one',
   days.localMidnight === '2026-08-17' && days.utcWouldSay === '2026-08-16',
   `local ${days.localMidnight}, UTC would say ${days.utcWouldSay}`);
 check('a date outside the week is not treated as a tournament day', days.outside === false);
 
 console.log('\n=== Follow Matches: the day, dimmed ===');
+// Auto-selection is tested above; from here the suite pins day one explicitly.
+// Letting it follow "today" turned every count below into a test of how far the
+// tournament has got — 64 first-round matches on the 17th, 16 on the 18th — and
+// the court grid vanishes on days whose order of play the fixtures predate.
+await ev(`(() => { state.matchDay = TMT.dates[0];
+  renderDaybar('#mDaybar', state.matchDay, pickMatchDay); renderMatches(); })()`);
 const day1 = await ev(`({
   day: state.matchDay,
   activeDay: [...document.querySelectorAll('#mDaybar .day.is-active')].map(b=>b.textContent)[0],
@@ -258,6 +266,10 @@ check('player detail rendered', fp.detail === true);
 
 await ev(`[...document.querySelectorAll('.subtab')].find(b=>b.dataset.ptab==='schedule').click()`);
 await wait(3500);
+// Same reasoning as above: whether these eight players happen to be playing on
+// whatever today is says nothing about whether the schedule works.
+await ev(`(() => { state.day = 'all';
+  renderDaybar('#daybar', state.day, pickScheduleDay); renderSchedule(); })()`);
 const list = await ev(`({
   listVisible: document.querySelector('#ptab-list').classList.contains('is-active'),
   schedVisible: document.querySelector('#ptab-schedule').classList.contains('is-active'),

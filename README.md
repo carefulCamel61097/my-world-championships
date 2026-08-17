@@ -639,6 +639,29 @@ HTTP 500. Use it for head-to-heads, not for single-player profiles. It returns
 `tournament.name`), **and `ranking.team1` / `ranking.team2`** — so both players'
 World and Race-to rankings come free with the head-to-head, no extra request.
 
+⚠️⚠️ **The response mixes two frames of reference, and this is a trap.**
+
+| Block | Oriented to |
+|---|---|
+| `stats.team1` / `stats.team2` | **your query** — swap `t1p1`/`t2p1` and the wins swap with them |
+| `ranking.team1` / `ranking.team2` | **your query** — likewise |
+| `matches[].result.winner`, `matches[].progress.games[]` | **that match's own draw**, unchanged whichever way you ask |
+
+Each entry in `matches[]` carries its own `team1` / `team2` objects (with
+`player1.id`), and *those* are what `result.winner` counts against. SHI Yu Qi vs Ayush
+SHETTY is the worked example: at the Malaysia Open SHI is team1, at the Asia
+Championships final SHETTY is team1 — same query, opposite frames, two rows apart.
+
+Reading `winner === 1` as "the player whose popup this is" therefore credits roughly half
+of all past meetings to the loser, which is exactly the bug that shipped. Resolve the side
+per match by matching player ids (`h2hOrient`), then state the winner *and* the game
+scores from that side. Verified by asking both ways round: the match list is byte-identical
+while `stats` flips 3–1 → 1–3.
+
+The cheap tell that something is wrong here: the rows stop adding up to the tally printed
+directly above them. That check is now a test, and it holds for any pair, so it does not
+rot when this particular fixture goes stale.
+
 **Season results**
 
 ```
@@ -781,6 +804,10 @@ An open tab keeps itself current without being a live scoreboard:
 | **What** | today's `day-matches` (times, courts, running scores) + the draw currently on screen (who advanced) — two requests a poll, about one page load per hour of watching |
 | **Never** | while a dialog is open, or in a background tab |
 
+The timer only ever chases **today**, because that is where scores are moving. A **click**
+also takes in the day you are looking at: a press means "update what is in front of me",
+and one extra request on an explicit action is better than silently ignoring the ask.
+
 Three details that matter more than the timer:
 
 - **It has to out-run its own cache.** Responses are cached for five minutes, which is
@@ -836,6 +863,7 @@ node tests/run.mjs               # everything (~9 min)
 node tests/run.mjs unit          # no browser at all (~1 s)
 node tests/run.mjs draw          # only the suites touching the Draw view
 node tests/run.mjs live          # the auto-refresh suite
+node tests/run.mjs h2h           # head-to-head, including winner orientation
 node tests/run.mjs v9 v11        # named suites
 node tests/run.mjs --live draw   # ignore the fixtures, hit the real API
 node tests/run.mjs --record v6   # top the fixture set up
@@ -867,7 +895,15 @@ no test-only code path — what runs is exactly what ships. Recorded responses a
 committed**: they are a large snapshot of someone else's data and they go stale. Run
 `node tests/record.mjs` to rebuild the set (~4 minutes against the live API).
 
-Full run: **~9.5 minutes**, down from ~50.
+Full run: **~10 minutes**, down from ~50.
+
+**Suites must not encode the calendar.** Three separate times now, a test has quietly
+turned into a test of how far the tournament has got: card heights grew once matches
+carried scores, `v11` counted 64 first-round matches on a day that later held 16, and
+`v12` targeted 17 August and went red at midnight on its first night alive. Derive the
+day from `todayIso()`, pin day one explicitly when the assertion is about layout rather
+than about *today*, and never assume a given day's order of play exists — fixtures are a
+snapshot, and BWF publishes each day's OOP only shortly beforehand.
 
 ### Verified against live data
 
@@ -881,6 +917,10 @@ Full run: **~9.5 minutes**, down from ~50.
   back to 2017) plus both rankings and both season strips; every hotkey works including
   wrap-around and numpad zoom; the bracket renders 63 nodes, 124 connector segments and
   6 column labels; no uncaught exceptions.
+- Head-to-head winner orientation, both ways round: the rows credit the same winner
+  whichever player's popup you open, the scorelines mirror, and — the assertion that
+  generalises — the per-row winners add up to the tally printed above them. SHI Yu Qi
+  3–1 Ayush SHETTY, with the Asia Championships 2026 final reading 21–8, 21–10 to SHI.
 - Live refresh driven end-to-end with a fixture that changes under the page: the poll
   stands down in a hidden tab, a refresh past the five-minute cache does reach the network
   (proved by counting fixture serves, not by trusting the result), exactly the one match

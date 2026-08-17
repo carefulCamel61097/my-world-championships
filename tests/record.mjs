@@ -130,6 +130,19 @@ await step('head-to-heads', 30000, `(async () => {
   }
 })()`);
 
+// v13 needs one specific pair, both ways round: SHI Yu Qi vs Ayush SHETTY have
+// met four times with the team1/team2 orientation flipping between meetings,
+// which is the whole point of that suite. Clicking bracket nodes would never
+// produce the reversed query, so ask for it directly.
+await step('the orientation pair, both ways round', 8000, `(async () => {
+  const pick = re => [...state.draws.ms.entries.values()].find(e => re.test(e.name));
+  const A = pick(/SHI Yu Qi/i), B = pick(/Ayush SHETTY/i);
+  if (!A || !B) return;
+  for (const [x, y] of [[A, B], [B, A]]) {
+    await getJSON('h2h/statistics', h2hParams(x, y), 'high', true);
+  }
+})()`);
+
 console.log(`\ndone — ${fixtureCount()} fixtures in ${FIX_DIR}`);
 ws.close(); chrome.kill(); server.close();
 try { fs.rmSync(profile, { recursive: true, force: true }); } catch {}

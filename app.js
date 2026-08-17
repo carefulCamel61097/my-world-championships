@@ -594,8 +594,8 @@ function pruneFresh() {
 }
 
 /**
- * @param {boolean} [force]  from the button: ignore the visibility and
- *   in-week guards, and refresh whatever day is on screen.
+ * @param {boolean} [force]  from the button: ignore the visibility and in-week
+ *   guards, and include whatever day is on screen.
  */
 async function refreshLive(force) {
   if (liveBusy) return;
@@ -604,10 +604,14 @@ async function refreshLive(force) {
   // Never redraw the page out from under an open dialog.
   if (!force && (document.hidden || modalOpen())) return;
 
-  let day = auto;
-  if (!day && force) {
+  // The timer only ever wants today — that is where scores are moving. A click
+  // means "update what I am looking at", so it takes the day on screen too;
+  // one extra request on an explicit press is worth not ignoring the ask.
+  const days = new Set();
+  if (auto) days.add(auto);
+  if (force) {
     const d = visibleDay();
-    day = d && d !== 'all' ? d : null;
+    if (d && d !== 'all') days.add(d);
   }
   const cat = state.drawCat;
   const before = drawSig(state.draws[cat]);
@@ -615,7 +619,9 @@ async function refreshLive(force) {
   liveBusy = true;
   paintLive('checking');
   try {
-    liveNews = day ? await loadDay(day, true) : 0;
+    let moved = 0;
+    for (const d of days) moved += await loadDay(d, true);
+    liveNews = moved;
     if (force || Date.now() - (state.drawAt[cat] || 0) > LIVE_MS) {
       try { await loadDraw(cat, 'high', true); } catch { /* keep the old draw */ }
     }
@@ -2938,6 +2944,27 @@ function h2hParams(teamA, teamB) {
   return q;
 }
 
+/**
+ * Which side of a *historical* meeting our teamA played on: 1, 2, or 0.
+ *
+ * This is not the side we asked about. `stats` and `ranking` come back oriented
+ * to the query, but every match in the list keeps the team1/team2 it had in its
+ * own draw — so in one meeting our player is team1 and in the next he is team2,
+ * and `result.winner` means nothing until you know which. Reading winner===1 as
+ * "the player whose popup this is" credited roughly half of all past meetings to
+ * the loser, and made the rows contradict the tally printed directly above them.
+ */
+function h2hOrient(m, teamA) {
+  const mine = new Set((teamA.players || []).map(p => String(p.id)));
+  const idsOf = t => ['player1', 'player2', 'player3']
+    .map(k => t && t[k] && t[k].id)
+    .filter(v => v != null)
+    .map(String);
+  if (idsOf(m.team1).some(i => mine.has(i))) return 1;
+  if (idsOf(m.team2).some(i => mine.has(i))) return 2;
+  return 0;
+}
+
 function teamFlag(team) {
   return (team && team.countryFlagUrl)
     || (team && team.players && team.players[0] && team.players[0].countryFlagUrl)
@@ -3001,10 +3028,20 @@ async function openH2H(teamA, teamB) {
   }).map(m => {
     const info = m.info || {}, res = m.result || {}, prog = m.progress || {};
     const when = (info.matchTime || '').slice(0, 10);
-    const games = (prog.games || []).map(g =>
-      `<span class="g"><i class="${g.team1 > g.team2 ? 'w' : ''}">${esc(g.team1)}</i>-<i class="${g.team2 > g.team1 ? 'w' : ''}">${esc(g.team2)}</i></span>`
-    ).join('');
-    const who = res.winner === 1 ? cardName(teamA) : res.winner === 2 ? cardName(teamB) : null;
+
+    // Everything below is stated from teamA's point of view — the player on the
+    // left of the popup — so both the scores and the winner have to be turned
+    // round whenever teamA happened to be team2 in that match.
+    const aSide = h2hOrient(m, teamA) || 1;
+    const mineFirst = aSide === 1;
+    const games = (prog.games || []).map(g => {
+      const a = mineFirst ? g.team1 : g.team2;
+      const b = mineFirst ? g.team2 : g.team1;
+      return `<span class="g"><i class="${a > b ? 'w' : ''}">${esc(a)}</i>-<i class="${b > a ? 'w' : ''}">${esc(b)}</i></span>`;
+    }).join('');
+    const who = res.winner === 1 || res.winner === 2
+      ? cardName(res.winner === aSide ? teamA : teamB)
+      : null;
     const tmt = (m.tournament && m.tournament.name) || info.eventName || '';
     return `<div class="h2h-m">
         <span class="when">${esc(when)}</span>

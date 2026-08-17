@@ -25,8 +25,9 @@ const AREAS = {
   schedule: ['v10', 'v11', 'v6', 'v7'],
   nav:      ['v11', 'v7', 'v6'],
   live:     ['v12'],
+  h2h:      ['v13', 'v2', 'v3'],
   all:      ['test_bracket', 'test_surname', 'v2', 'v3', 'v4', 'v5', 'v6',
-             'v7', 'v8', 'v9', 'v10', 'v11', 'v12', 'final'],
+             'v7', 'v8', 'v9', 'v10', 'v11', 'v12', 'v13', 'final'],
 };
 
 const args = process.argv.slice(2);
@@ -70,8 +71,16 @@ for (const s of suites) {
   if (verdict !== 'pass') failed.push(s);
   console.log(`${verdict.padEnd(12)} ${secs}s   ${fixtures}`);
   if (verdict !== 'pass') {
-    console.log(out.buf.split('\n').filter(l => /^FAIL|EXC |LOG /.test(l)).slice(0, 8)
-      .map(l => '    ' + l).join('\n'));
+    const lines = out.buf.split('\n').filter(l => /^FAIL|EXC |LOG /.test(l)).slice(0, 8);
+    // A suite that dies before its first check has no FAIL lines at all, and
+    // printing nothing sends you off to re-run the whole set to find out why.
+    // Chrome losing a debugging port is transient; a real break is not, and
+    // from a bare "crash" the two are indistinguishable.
+    if (!lines.length) {
+      lines.push(`exit ${out.code}, no checks reported — tail:`,
+        ...out.buf.trimEnd().split('\n').slice(-6));
+    }
+    console.log(lines.map(l => '    ' + l).join('\n'));
   }
 }
 
