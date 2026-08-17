@@ -4,3 +4,10 @@
 .idea/
 .DS_Store
 Thumbs.db
+
+# Recorded BWF API responses for the test suites. Regenerate with:
+#   node tests/record.mjs
+# Not committed: it is a large snapshot of someone else's data, and it goes
+# stale as the tournament progresses.
+tests/fixtures/
+tests/shots/

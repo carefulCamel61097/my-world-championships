@@ -39,6 +39,7 @@ gh api -X POST repos/<owner>/my-world-championships/pages \
 | `index.html` | Page shell: top bar, discipline chips, the three views, picker modal |
 | `styles.css` | Two skins (BWF / SportsPort) x light + dark, via CSS custom properties |
 | `app.js` | Request queue + cache, draw parsing, bracket maths, rendering |
+| `tests/` | 13 suites driving a real Chrome over CDP, plus the fixture harness |
 
 ### Design
 
@@ -792,6 +793,41 @@ browser, which is a much bigger commitment.
 15. ⬜ Recent form strip (`vue-player-match-previous` is already fetched, not yet shown).
 16. ⬜ Calendar (`.ics`) export.
 17. ⬜ Elo — not planned; badmintonranks is off the table by choice.
+
+## Tests
+
+```bash
+node tests/run.mjs               # everything (~9 min)
+node tests/run.mjs unit          # no browser at all (~1 s)
+node tests/run.mjs draw          # only the suites touching the Draw view
+node tests/run.mjs v9 v11        # named suites
+node tests/run.mjs --live draw   # ignore the fixtures, hit the real API
+node tests/run.mjs --record v6   # top the fixture set up
+```
+
+There is no test framework and no headless browser. BWF's Cloudflare **403s headless
+Chrome** — see §3.1 — so every suite launches a real windowed Chrome and drives it over
+the DevTools Protocol. That is not a preference; it is the only way to exercise this app
+against this API.
+
+**Fixtures.** The app politely spaces its own requests 320 ms apart, so between that and
+network latency a suite used to spend ~45 seconds loading before it could assert anything
+— about **14 minutes of pure waiting** across a full run, and the answers drifted as the
+tournament progressed. `tests/fixtures.mjs` intercepts at CDP's `Fetch` domain and
+replays recorded responses from disk:
+
+- **replay** pauses at the *request* stage and fulfils from a file. A request with no
+  fixture falls through to the live API and is **reported**, so a gap shows up as a slow
+  test rather than a silently wrong answer.
+- **record** (`--record`) pauses at the *response* stage, saves the body, and lets the
+  request continue.
+
+Interception is at the network layer rather than through a local proxy so the app needs
+no test-only code path — what runs is exactly what ships. Recorded responses are **not
+committed**: they are a large snapshot of someone else's data and they go stale. Run
+`node tests/record.mjs` to rebuild the set (~4 minutes against the live API).
+
+Full run: **~9.5 minutes**, down from ~50.
 
 ### Verified against live data
 
