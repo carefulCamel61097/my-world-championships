@@ -246,6 +246,23 @@ a { color: var(--accent-text); }
   border: 1.5px solid var(--header-fg); }
 @media (max-width: 620px) { .icon-btn-label { display: none; } }
 
+/* live scores — the dot carries the whole signal on narrow screens, where the
+   label beside it is hidden. */
+.live-dot {
+  width: 9px; height: 9px; border-radius: 50%; display: block; flex: none;
+  background: var(--header-fg); opacity: .4;
+}
+#liveBtn.is-on .live-dot { background: var(--live); opacity: 1; animation: livepulse 2.6s ease-in-out infinite; }
+#liveBtn.is-busy .live-dot { animation-duration: .7s; }
+#liveBtn.is-news { border-color: var(--live); }
+#liveBtn.is-news .live-dot {
+  background: var(--live); opacity: 1; animation: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 45%, transparent);
+}
+#liveLabel { font-variant-numeric: tabular-nums; }
+@keyframes livepulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .live-dot { animation: none !important; } }
+
 /* view tabs */
 .tabs {
   max-width: 1180px; margin: 0 auto; padding: 0 16px;
@@ -533,6 +550,21 @@ a { color: var(--accent-text); }
 
 .starred-count { font-size: 12.5px; }
 .starred-count b { color: var(--text); }
+
+/* ---- a score that moved on the last refresh ----
+   Has to beat is-dim: the point is to be findable on a page of 64 cards you
+   were not watching when it changed. */
+.match.is-fresh {
+  border-color: var(--live);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--live) 55%, transparent), var(--shadow);
+}
+.match.is-dim.is-fresh { opacity: .92; }
+.match.is-fresh .match-head::after {
+  content: 'new'; order: 99;
+  font-size: 9.5px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+  color: var(--live); border: 1px solid var(--live); border-radius: var(--radius-pill);
+  padding: 0 5px; line-height: 14px;
+}
 
 /* match card — BWF reading order: flag, seed, name, per-game scores */
 .match {

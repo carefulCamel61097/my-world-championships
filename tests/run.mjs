@@ -17,15 +17,16 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 const AREAS = {
   unit:     ['test_bracket', 'test_surname'],
-  matches:  ['v10', 'v11', 'final'],
+  matches:  ['v10', 'v11', 'v12', 'final'],
   players:  ['v2', 'v3', 'v4', 'v5', 'v7', 'v8'],
   draw:     ['v2', 'v9', 'v11'],
   predict:  ['v9', 'v11'],
   names:    ['test_surname', 'v8', 'v11', 'final'],
   schedule: ['v10', 'v11', 'v6', 'v7'],
   nav:      ['v11', 'v7', 'v6'],
+  live:     ['v12'],
   all:      ['test_bracket', 'test_surname', 'v2', 'v3', 'v4', 'v5', 'v6',
-             'v7', 'v8', 'v9', 'v10', 'v11', 'final'],
+             'v7', 'v8', 'v9', 'v10', 'v11', 'v12', 'final'],
 };
 
 const args = process.argv.slice(2);

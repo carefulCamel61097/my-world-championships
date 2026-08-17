@@ -119,13 +119,17 @@ function cacheSet(key, value) {
 /**
  * Serialised, cached GET. Retries once on an empty body (the shape a
  * rate-limit rejection takes here).
+ *
+ * `fresh` skips the cache read — the live refresh is asking precisely because
+ * the five-minute-old copy is the thing it wants to replace. It still writes,
+ * so the rest of the app keeps getting the new answer for free.
  */
-function getJSON(path, params, priority) {
+function getJSON(path, params, priority, fresh) {
   const qs = new URLSearchParams(params || {}).toString();
   const url = `${API}/${path}${qs ? '?' + qs : ''}`;
   const key = 'wc26:' + url;
 
-  const hit = cacheGet(key);
+  const hit = fresh ? null : cacheGet(key);
   if (hit !== null) return Promise.resolve(hit);
 
   const run = async () => {
@@ -185,8 +189,10 @@ const state = {
   selected: new Set(store.read('players', [])),
   active: null,          // highlighted player id in the Players view
   draws: {},             // cat -> { entries, cells, matches, maxCol }
+  drawAt: {},            // cat -> ms the draw was last fetched
   dayIndex: {},          // match id -> enriched match from day-matches
   daysLoaded: new Set(),
+  fresh: new Map(),      // match id -> ms its score last changed under you
   playerCache: {},       // playerId:cat -> detail bundle promise
   ranks: {},             // cat -> { entryKey: bwfRank }
   presets: [],           // saved named selections
@@ -408,12 +414,12 @@ function shortDay(iso) {
 
 /* ============================ draw loading ============================ */
 
-async function loadDraw(cat, priority) {
-  if (state.draws[cat]) return state.draws[cat];
+async function loadDraw(cat, priority, fresh) {
+  if (state.draws[cat] && !fresh) return state.draws[cat];
 
   const data = await getJSON('vue-tournament-draw-data', {
     tmtId: TMT.id, tmtType: 1, drawId: DRAW_ID[cat], isPara: 0,
-  }, priority);
+  }, priority, fresh);
 
   // The bracket grid and the flat match list describe the same 63 matches, but
   // only the flat list carries `id` (and later, times and scores). They join on
@@ -468,6 +474,7 @@ async function loadDraw(cat, priority) {
 
   const draw = { cat, cells, entries, maxCol, byeCodes, matches: allMatches };
   state.draws[cat] = draw;
+  state.drawAt[cat] = Date.now();
   return draw;
 }
 
@@ -477,13 +484,29 @@ function enrich(m) {
   return live ? Object.assign({}, m, live) : m;
 }
 
-async function loadDay(date) {
-  if (state.daysLoaded.has(date)) return;
+/**
+ * What a match looks like to someone watching: anything in here changing is
+ * news. Used to spot which cards actually moved on a refresh, so the page can
+ * say "2 new results" instead of silently redrawing.
+ */
+function liveSig(m) {
+  if (!m) return '';
+  return [m.matchStatus || '', m.winner || '', m.duration || '',
+          (m.score || []).map(g => `${g.home}-${g.away}`).join(',')].join('|');
+}
+
+/**
+ * @param {boolean} [fresh]  re-fetch a day already held, and record what moved.
+ * @returns {number} how many matches changed (0 unless `fresh`).
+ */
+async function loadDay(date, fresh) {
+  if (state.daysLoaded.has(date) && !fresh) return 0;
   state.daysLoaded.add(date);
+  let changed = 0;
   try {
     const list = await getJSON('tournaments/day-matches', {
       tournamentCode: TMT.code, date, order: 1, court: 0,
-    }, 'low');
+    }, fresh ? 'high' : 'low', fresh);
     if (Array.isArray(list)) {
       // The array order IS the order of play. Do not trust matchTime for
       // sequence: BWF spaces the estimates a flat 50 minutes apart and they are
@@ -495,12 +518,20 @@ async function loadDay(date) {
         const court = m.courtName || '';
         const seq = seen.get(court) || 0;
         seen.set(court, seq + 1);
+        const before = state.dayIndex[m.id];
         state.dayIndex[m.id] = Object.assign({}, m, { oopIndex: i, courtSeq: seq });
+        // Only on a refresh: on the first load *everything* is new, which is
+        // not news.
+        if (fresh && before && liveSig(before) !== liveSig(m)) {
+          changed++;
+          state.fresh.set(String(m.id), Date.now());
+        }
       });
     }
   } catch {
-    state.daysLoaded.delete(date);   // allow a later retry
+    if (!fresh) state.daysLoaded.delete(date);   // allow a later retry
   }
+  return changed;
 }
 
 /** Load all tournament days in the background, re-rendering as they arrive. */
@@ -509,6 +540,129 @@ async function loadAllDays(onProgress) {
     await loadDay(d);
     if (onProgress) onProgress(d);
   }
+}
+
+/* ============================ live refresh ============================
+
+   Scores land in two places: the day's order of play (times, courts, running
+   game scores) and the draw (who advanced, which is what the bracket and the
+   prediction marks read). Both are re-fetched on a timer while the page is
+   actually in front of you, and immediately when you come back to the tab —
+   that second trigger matters more than the timer, because a tab left open
+   for an hour is the normal way this gets used.
+
+   Two requests a poll, only during the tournament week, only while visible:
+   about the cost of one page load per hour of watching.
+
+   Deliberately *not* a scheduled job that commits data into the repo. The
+   page already talks to BWF straight from the browser, so a job could only
+   fetch the same thing on a coarser clock and serve it staler; and BWF's edge
+   answers a real browser but 403s a CI runner, which would have to be worked
+   around before any of it ran at all.
+   ======================================================================== */
+
+const LIVE_MS      = 90 * 1000;        // between polls while the tab is in front of you
+const LIVE_BACK_MS = 30 * 1000;        // on return to the tab: refresh if older than this
+const FRESH_MS     = 3 * 60 * 1000;    // how long a changed card stays marked as new
+
+let liveTimer = null;
+let liveBusy  = false;
+let liveAt    = 0;    // ms the last refresh completed
+let liveNews  = 0;    // how many matches moved in it
+
+/** Outside the week nothing is playing, so nothing is worth polling for. */
+const liveDay = () => currentTmtDay();
+
+const modalOpen = () => ['#picker', '#h2h'].some(s => { const n = $(s); return n && !n.hidden; });
+
+/** Which day the view on screen is showing, for a manual refresh out of week. */
+function visibleDay() {
+  return state.view === 'players' && state.playerTab === 'schedule' ? state.day : state.matchDay;
+}
+
+/** Cheap "has anyone advanced" fingerprint of a draw. */
+function drawSig(d) {
+  if (!d) return '';
+  return Object.entries(d.cells).map(([k, m]) => k + ':' + (m ? (m.winner || '') : '')).join('|');
+}
+
+function pruneFresh() {
+  const now = Date.now();
+  let n = 0;
+  for (const [id, t] of state.fresh) if (now - t > FRESH_MS) { state.fresh.delete(id); n++; }
+  return n;
+}
+
+/**
+ * @param {boolean} [force]  from the button: ignore the visibility and
+ *   in-week guards, and refresh whatever day is on screen.
+ */
+async function refreshLive(force) {
+  if (liveBusy) return;
+  const auto = liveDay();
+  if (!force && !auto) return;
+  // Never redraw the page out from under an open dialog.
+  if (!force && (document.hidden || modalOpen())) return;
+
+  let day = auto;
+  if (!day && force) {
+    const d = visibleDay();
+    day = d && d !== 'all' ? d : null;
+  }
+  const cat = state.drawCat;
+  const before = drawSig(state.draws[cat]);
+
+  liveBusy = true;
+  paintLive('checking');
+  try {
+    liveNews = day ? await loadDay(day, true) : 0;
+    if (force || Date.now() - (state.drawAt[cat] || 0) > LIVE_MS) {
+      try { await loadDraw(cat, 'high', true); } catch { /* keep the old draw */ }
+    }
+    liveAt = Date.now();
+  } catch { /* leave what is on screen; the next tick tries again */ }
+  liveBusy = false;
+
+  // Repaint only when something actually moved — a rebuild every 90 seconds
+  // would drop text selections and fight the scroll position for nothing.
+  const pruned = pruneFresh();
+  if (liveNews || pruned || drawSig(state.draws[cat]) !== before) renderAll();
+  paintLive();
+}
+
+function paintLive(phase) {
+  const btn = $('#liveBtn'), lab = $('#liveLabel');
+  if (!btn || !lab) return;
+  const on = !!liveDay();
+  btn.classList.toggle('is-on', on);
+  btn.classList.toggle('is-busy', phase === 'checking');
+  btn.classList.toggle('is-news', !!liveNews && phase !== 'checking');
+
+  if (phase === 'checking') { lab.textContent = 'Checking…'; return; }
+  if (!liveAt) {
+    lab.textContent = on ? 'Live' : 'Refresh';
+    btn.title = on
+      ? `Checking BWF for new scores every ${LIVE_MS / 1000} seconds. Click to check now.`
+      : 'Click to re-check BWF for scores.';
+    return;
+  }
+  const clock = new Date(liveAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  lab.textContent = liveNews ? `${liveNews} new` : clock;
+  btn.title = `Scores last checked at ${clock}${liveNews ? ` — ${liveNews} match${liveNews === 1 ? '' : 'es'} moved` : ''}. `
+    + (on ? `Checking every ${LIVE_MS / 1000} seconds. ` : '') + 'Click to check now.';
+}
+
+function startLive() {
+  paintLive();
+  const btn = $('#liveBtn');
+  if (btn) btn.onclick = () => refreshLive(true);
+  liveTimer = setInterval(() => refreshLive(), LIVE_MS);
+  // The high-value moment: you left the tab open through a session and came
+  // back. Waiting out the rest of the interval would show you a stale page at
+  // exactly the moment you looked at it.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && Date.now() - liveAt > LIVE_BACK_MS) refreshLive();
+  });
 }
 
 /* ============================ bracket maths ============================
@@ -780,8 +934,12 @@ function matchCard(m, opts) {
   ].filter(Boolean).join('');
 
   const starred = isStarred(m);
+  // Marked when the score changed under you on a refresh, so coming back to
+  // the tab shows you what moved rather than just a differently-filled page.
+  const moved = state.fresh.get(String(m.id));
   const card = el('div', 'match'
     + (st.cls === 'live' ? ' is-live' : '')
+    + (moved && Date.now() - moved < FRESH_MS ? ' is-fresh' : '')
     + (opts && opts.selectable ? ' is-selectable' + (starred ? ' is-starred' : ' is-dim') : ''));
   card.innerHTML = `
     <div class="match-head">${head}</div>
@@ -2312,6 +2470,10 @@ function setDrawCat(c) {
   frameMap();
   loadDraw(c).then(() => renderDraw()).catch(() => {});
   ensurePredictRanks();
+  // A draw held since this morning is stale the moment you switch to it. Only
+  // when it is already in hand — the loadDraw above is fetching a fresh copy of
+  // anything else, and two requests for the same draw is just noise.
+  if (liveDay() && state.draws[c] && Date.now() - state.drawAt[c] > LIVE_MS) refreshLive();
 }
 
 function setDrawMode(mode) {
@@ -3528,6 +3690,7 @@ async function init() {
 
   paintCatChips();
   setView(state.view);
+  startLive();
 
   // Everything below is progressive: the page is already usable. The shared
   // request queue serialises these, so they never burst the API.

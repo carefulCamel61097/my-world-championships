@@ -40,6 +40,13 @@ export function fixtureCount() {
  *
  * The suite must forward every CDP event to the returned `handle`, and pass its
  * own `send(method, params, sessionId)`.
+ *
+ * @param {object}   [opts]
+ * @param {function} [opts.mutate]  (url, bodyText, nth) => bodyText | null.
+ *   Called on every replayed response, `nth` counting from 1 per URL. Returning
+ *   null leaves the fixture alone. This is how the live-refresh suite makes the
+ *   second fetch of a day differ from the first — otherwise a replayed API can
+ *   only ever describe a tournament frozen at one instant.
  */
 export async function installFixtures(send, sessionId, opts = {}) {
   // FIXTURES=record re-runs any suite against the live API and tops up the set
@@ -49,6 +56,7 @@ export async function installFixtures(send, sessionId, opts = {}) {
   if (record) fs.mkdirSync(FIX_DIR, { recursive: true });
 
   const stats = { served: 0, recorded: 0, missed: 0, misses: new Set() };
+  const seen = new Map();          // url -> how many times replayed
 
   await send('Fetch.enable', {
     patterns: [{ urlPattern: `*${API_HOST}*`, requestStage: record ? 'Response' : 'Request' }],
@@ -87,6 +95,13 @@ export async function installFixtures(send, sessionId, opts = {}) {
       return;
     }
     stats.served++;
+    const nth = (seen.get(url) || 0) + 1;
+    seen.set(url, nth);
+    if (opts.mutate) {
+      const text = fx.base64Encoded ? Buffer.from(fx.body, 'base64').toString('utf8') : fx.body;
+      const next = opts.mutate(url, text, nth);
+      if (next != null) fx = { status: fx.status, base64Encoded: false, body: next };
+    }
     send('Fetch.fulfillRequest', {
       requestId: rid,
       responseCode: fx.status || 200,

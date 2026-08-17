@@ -770,6 +770,39 @@ fetches JSON and commits it — **does not work**: Cloudflare blocks non-browser
 (§3.1). If the client-side route ever fails, the fallback would have to drive a real
 browser, which is a much bigger commitment.
 
+### Live refresh
+
+An open tab keeps itself current without being a live scoreboard:
+
+| | |
+|---|---|
+| **When** | every 90 s while the tab is visible, and immediately on returning to it if the last check is over 30 s old |
+| **Only** | during the tournament week — outside it nothing is playing, so the timer stands down and the button reads *Refresh* instead of *Live* |
+| **What** | today's `day-matches` (times, courts, running scores) + the draw currently on screen (who advanced) — two requests a poll, about one page load per hour of watching |
+| **Never** | while a dialog is open, or in a background tab |
+
+Three details that matter more than the timer:
+
+- **It has to out-run its own cache.** Responses are cached for five minutes, which is
+  precisely the copy a refresh wants to replace, so `getJSON(..., fresh)` skips the read
+  and still writes — the rest of the app gets the new answer for free.
+- **It repaints only when something moved.** Each poll fingerprints the day's scores and
+  the draw's winners; if neither changed, the DOM is left alone. Rebuilding the view every
+  90 seconds would drop text selections and fight the scroll position for nothing.
+- **It says what changed.** Matches whose score, status or winner moved are marked `new`
+  for three minutes and the indicator reads *2 new*. Coming back to a page of 64 cards, the
+  question is never "what is the state of the world" but "what happened while I was gone".
+
+**Why not GitHub Actions.** It was the first instinct and it is the wrong tool twice over.
+The page already talks to BWF from the browser, so a scheduled job could only fetch the
+same JSON on a coarser clock (cron's floor is 5 minutes and the shared queue routinely
+runs 10–20 minutes late) and serve it *staler*, plus a commit per poll and a second copy
+of the truth to keep consistent. And it would not run at all: a runner gets `403` from
+Cloudflare — confirmed again while building this, `curl` to `day-matches` returns a 5.8 KB
+challenge page — so it would need that defeated before the first byte of data arrived.
+Scheduled jobs are the right answer when the *client cannot reach the source*. Here it
+can, so the client is the cheapest possible place to poll.
+
 ---
 
 ## 5. Build order — v1 complete
@@ -790,9 +823,11 @@ browser, which is a much bigger commitment.
 13. ✅ Order of play as a court grid, once BWF publishes it.
 14. ✅ Restructured to three views: Follow Matches (star what's worth watching),
     Follow Players (schedule + detail), Draw (results and predictions in one tree).
-15. ⬜ Recent form strip (`vue-player-match-previous` is already fetched, not yet shown).
-16. ⬜ Calendar (`.ics`) export.
-17. ⬜ Elo — not planned; badmintonranks is off the table by choice.
+15. ✅ Live refresh: an open tab re-checks BWF every 90 s during the week and marks
+    what moved.
+16. ⬜ Recent form strip (`vue-player-match-previous` is already fetched, not yet shown).
+17. ⬜ Calendar (`.ics`) export.
+18. ⬜ Elo — not planned; badmintonranks is off the table by choice.
 
 ## Tests
 
@@ -800,6 +835,7 @@ browser, which is a much bigger commitment.
 node tests/run.mjs               # everything (~9 min)
 node tests/run.mjs unit          # no browser at all (~1 s)
 node tests/run.mjs draw          # only the suites touching the Draw view
+node tests/run.mjs live          # the auto-refresh suite
 node tests/run.mjs v9 v11        # named suites
 node tests/run.mjs --live draw   # ignore the fixtures, hit the real API
 node tests/run.mjs --record v6   # top the fixture set up
@@ -821,6 +857,10 @@ replays recorded responses from disk:
   test rather than a silently wrong answer.
 - **record** (`--record`) pauses at the *response* stage, saves the body, and lets the
   request continue.
+- **mutate** — an optional per-suite hook that rewrites a replayed body, with a serve
+  count per URL. A frozen API can only ever describe one instant, and the live-refresh
+  suite needs the *second* fetch of a day to differ from the first. It fakes a result
+  landing mid-session, which is otherwise untestable without waiting for real badminton.
 
 Interception is at the network layer rather than through a local proxy so the app needs
 no test-only code path — what runs is exactly what ships. Recorded responses are **not
@@ -841,6 +881,12 @@ Full run: **~9.5 minutes**, down from ~50.
   back to 2017) plus both rankings and both season strips; every hotkey works including
   wrap-around and numpad zoom; the bracket renders 63 nodes, 124 connector segments and
   6 column labels; no uncaught exceptions.
+- Live refresh driven end-to-end with a fixture that changes under the page: the poll
+  stands down in a hidden tab, a refresh past the five-minute cache does reach the network
+  (proved by counting fixture serves, not by trusting the result), exactly the one match
+  the fixture moved is detected and marked `new` with its score and winner on the card,
+  and a second refresh finding nothing leaves the DOM untouched — verified by a marker
+  attribute surviving on a card that a repaint would have destroyed.
 - Season strip checked against a real season: SHI Yu Qi 2026 renders
   `F · R32 · W · SF · R16 · R16 · QF · QF` with the right levels, colours and fills
   (100 / 80 / 60 / 40 / 20 / 13 %), with the World Championships and Thomas & Uber Cup
