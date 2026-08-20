@@ -39,7 +39,7 @@ gh api -X POST repos/<owner>/my-world-championships/pages \
 | `index.html` | Page shell: top bar, discipline chips, the three views, picker modal |
 | `styles.css` | Two skins (BWF / SportsPort) x light + dark, via CSS custom properties |
 | `app.js` | Request queue + cache, draw parsing, bracket maths, rendering |
-| `tests/` | 13 suites driving a real Chrome over CDP, plus the fixture harness |
+| `tests/` | 15 suites driving a real Chrome over CDP, plus the fixture harness |
 
 ### Design
 
@@ -130,11 +130,62 @@ its own band, showing either the confirmed match or every opponent they could st
 
 **Draw** is the whole 63-match draw as one pannable, zoomable map, in the same shape as
 the SportsPort tournament map: feeders on the left, Final on the right, elbow connectors
-between. Followed players are outlined. *Fit* frames the entire draw; *Jump to my player*
+between.
+
+#### Folding away rounds that are over
+
+By the quarter-finals a full bracket is mostly empty space. The spacing law is
+`centre(c, r) = (r + 0.5) · 2^c · SLOT`, so **every round doubles the gap between its
+cards**: the four QF cards sit sixteen slots apart because they still have to line up
+with thirty-two first-round matches nobody is looking at any more.
+
+**Hiding the early columns would not have helped** — the gaps come from the geometry, not
+from the columns being drawn. So the tree is *re-laid out* from the chosen round, which
+becomes the new column zero and puts its cards one slot apart again. It stays a real
+bracket, connectors and all, just a smaller one:
+
+| Show from | Cards | Segments | Canvas |
+|---|---|---|---|
+| All | 63 | 124 | 1470 × 2126 |
+| R16 | 15 | 28 | 986 × 590 |
+| QF | 7 | 12 | 744 × 334 |
+| SF | 3 | 4 | 502 × 206 |
+
+At QF the entire rest of the tournament fits on screen with no scrolling at all.
+
+**The default follows the tournament**, like the day bars: the view opens at the earliest
+round that still has a match to play, and the chip for that round is lit so the choice is
+visible rather than mysterious. It is deliberately **capped at the quarter-finals** —
+however finished a draw is, one card is not a bracket. Byes are skipped when working out
+which round is live, since an unplayed bye would otherwise hold the view on a round that
+is finished. The choice is not persisted: each load picks the round that suits the day,
+which is what made the same rule work for the day bar.
+
+*Jump to my player* unfolds the draw automatically if that player went out in a round
+currently folded away — being taken nowhere is the worst possible answer to that button.
+
+Two things deliberately ignore the fold. **Picks and scoring always cover all 63
+matches** — a prediction sheet is about the tournament, not about the viewport, so the
+tally still reads `n/63` with three rounds hidden. And the **PNG export is always the
+whole sheet**, because a bracket you save to share should be complete. Followed players are outlined. *Fit* frames the entire draw; *Jump to my player*
 centres on them. Scrolling moves the view (both axes); zooming is on the buttons, `+`/`−`
 and ctrl+wheel. A draw is one discipline by definition, so this view keeps **its own
 MS/WS/MD/WD/XD selector**, independent of the filter chips above. Its other three modes
 fill the same tree in from your picks or from a ranking — see *Predictions*.
+
+**Matches that ended early are said out loud.** BWF does not put a retirement or
+a walkover in the score — it puts it in `scoreStatus` (0 Normal, 1 Walkover,
+2 Retired), with its own wording in `scoreStatusValue`. The score alone
+misrepresents both: a walkover carries **no games at all**, so the card is
+indistinguishable from a fixture nobody has played yet, and a retirement carries
+a part-played game (`8-18`) that reads as a scoreline nobody can explain. So the
+status badge says *Walkover* or *Retired*, and a `W/O` / `RET` mark goes on the
+side it happened to — the one that lost. Same treatment on bracket cards and in
+head-to-head history, where `result.scoreStatus` says the same thing.
+
+⚠️ `matchStatus` has a fourth value beyond `F` / `N` / `P`: **`O`, "Off court"** —
+played out, result not yet signed off. It arrives with a winner and a full score,
+and reading only `F` as finished put **"Scheduled"** on completed matches.
 
 **A doubles pair is always written `SURNAME / SURNAME`** — `GICQUEL / DELRUE`,
 `LIU / TAN` — everywhere it is named: match cards, the court grid, the player picker, the
@@ -852,9 +903,11 @@ can, so the client is the cheapest possible place to poll.
     Follow Players (schedule + detail), Draw (results and predictions in one tree).
 15. ✅ Live refresh: an open tab re-checks BWF every 90 s during the week and marks
     what moved.
-16. ⬜ Recent form strip (`vue-player-match-previous` is already fetched, not yet shown).
-17. ⬜ Calendar (`.ics`) export.
-18. ⬜ Elo — not planned; badmintonranks is off the table by choice.
+16. ✅ Retirements, walkovers and "off court" reported rather than silently
+    misdrawn; bracket folds away rounds that are over.
+17. ⬜ Recent form strip (`vue-player-match-previous` is already fetched, not yet shown).
+18. ⬜ Calendar (`.ics`) export.
+19. ⬜ Elo — not planned; badmintonranks is off the table by choice.
 
 ## Tests
 
@@ -864,6 +917,7 @@ node tests/run.mjs unit          # no browser at all (~1 s)
 node tests/run.mjs draw          # only the suites touching the Draw view
 node tests/run.mjs live          # the auto-refresh suite
 node tests/run.mjs h2h           # head-to-head, including winner orientation
+node tests/run.mjs fold          # round folding + retirements/walkovers
 node tests/run.mjs v9 v11        # named suites
 node tests/run.mjs --live draw   # ignore the fixtures, hit the real API
 node tests/run.mjs --record v6   # top the fixture set up
@@ -897,6 +951,21 @@ committed**: they are a large snapshot of someone else's data and they go stale.
 
 Full run: **~10 minutes**, down from ~50.
 
+⚠️ **Clean up after Chrome, twice over.** Each suite runs Chrome on a throwaway profile
+in `%TEMP%` and deletes it on exit — but a suite that crashes, or whose Chrome outlives
+it, leaves one behind. At ~50 MB each they are easy to ignore until they are not: 467 of
+them had quietly filled a 238 GB disk to zero bytes free, which surfaces as unrelated
+commands dying with *No space left on device*. `run.mjs` now sweeps `wc26-*` directories
+older than an hour before it starts, so the cleanup does not depend on every exit path
+being taken.
+
+⚠️ **Chrome outlives `kill()` on Windows.** The launcher we spawn is not the browser:
+reaping it leaves the real process holding the debugging port, so the *next* run of that
+suite cannot attach and dies inside undici with no hint of why. Every suite now takes the
+whole tree down with `taskkill /T /F` and fails with a readable message if the port never
+answers. This cost three full regression runs before it was recognised as one bug rather
+than three flakes.
+
 **Suites must not encode the calendar.** Three separate times now, a test has quietly
 turned into a test of how far the tournament has got: card heights grew once matches
 carried scores, `v11` counted 64 first-round matches on a day that later held 16, and
@@ -917,6 +986,17 @@ snapshot, and BWF publishes each day's OOP only shortly beforehand.
   back to 2017) plus both rankings and both season strips; every hotkey works including
   wrap-around and numpad zoom; the bracket renders 63 nodes, 124 connector segments and
   6 column labels; no uncaught exceptions.
+- Round folding measured geometrically, not cosmetically: the canvas shrinks
+  1470x2126 -> 744x334 from All to QF, connector segments 124 -> 12, and the four QF
+  cards end up one slot apart. Counting nodes alone would have passed just as happily
+  for an implementation that hid the columns and kept the white space.
+- Every retirement and walkover in the live data is marked exactly once, on the losing
+  side, with the status badge reading it in words; an off-court match no longer reads as
+  *Scheduled*.
+- The card-height suite earned its keep: a new `.rnd` class for the fold chips collided
+  with the round label already inside every match-card head, quietly turning it into a
+  bordered pill and adding 6px to every card in the app. The assertion caught it, and the
+  full-width chrome measured back to the baseline 26px head / 110px card once renamed.
 - Head-to-head winner orientation, both ways round: the rows credit the same winner
   whichever player's popup you open, the scorelines mirror, and — the assertion that
   generalises — the per-row winners add up to the tally printed above them. SHI Yu Qi

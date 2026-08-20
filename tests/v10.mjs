@@ -3,7 +3,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { installFixtures, fixtureReport } from './fixtures.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -29,6 +29,16 @@ const chrome = spawn(CHROME, ['--no-first-run','--no-default-browser-check',
   '--window-position=-2400,0','--window-size=1600,1100',
   `--user-data-dir=${profile}`, `--remote-debugging-port=${DBG}`, 'about:blank']);
 chrome.stderr.on('data', () => {});
+
+/* Chrome's launcher is not the browser on Windows: kill() reaps the process we
+   spawned while the real browser lives on holding the debugging port, so the
+   next run of this suite cannot attach. Take the whole tree down. */
+function killChrome() {
+  try { spawnSync('taskkill', ['/PID', String(chrome.pid), '/T', '/F'], { stdio: 'ignore' }); }
+  catch { /* fall through */ }
+  try { chrome.kill(); } catch {}
+}
+
 let wsUrl = null;
 for (let i = 0; i < 60 && !wsUrl; i++) {
   await new Promise(r => setTimeout(r, 400));
@@ -164,8 +174,9 @@ console.log('\n=== the card got shorter ===');
 const size = await ev(`(() => {
   const cards = [...document.querySelectorAll('.oop-grid .match')];
   const h = c => Math.round(c.getBoundingClientRect().height);
-  const played = cards.find(c => c.querySelectorAll('.sets b').length);
-  const unplayed = cards.find(c => !c.querySelectorAll('.sets b').length);
+  const scored = c => c.querySelectorAll('.sets b:not(.mk)').length;
+  const played = cards.find(c => scored(c));
+  const unplayed = cards.find(c => !scored(c));
   const c = unplayed || cards[0];
   return { unplayed: unplayed ? h(unplayed) : null,
            played: played ? h(played) : null,
@@ -183,7 +194,11 @@ console.log(' ', JSON.stringify(size));
 // the compaction was about the padding and the wasted line per side.
 // Before: head 30, side 47 each, foot 27 -> a ~160px card with nothing in it.
 check('a player row is far shorter than the old 47px', size.side <= 32, size.side + 'px');
-check('the head is tighter than the old 30px', size.head <= 30, size.head + 'px');
+// Deliberately NOT measured in the court grid. At a quarter of the width
+// "Scheduled - Round of 64 - MS - Court 1" legitimately takes two lines, and
+// this only ever passed there because the card it happened to pick was a
+// finished one with a shorter status word. The chrome is what was compacted,
+// so it is measured where nothing has to wrap; see the single-column card below.
 check('country no longer takes its own line', size.subInline !== 'block', size.subInline);
 check('all four parts still present', size.head > 0 && size.side > 0 && size.foot > 0,
   JSON.stringify(size));
@@ -199,11 +214,20 @@ const wide = await ev(`(() => {
 await wait(4000);
 const wideCard = await ev(`(() => {
   const c = document.querySelector('#scheduleList .match');
-  return c ? Math.round(c.getBoundingClientRect().height) : null;
+  if (!c) return null;
+  const h = n => Math.round(c.querySelector(n).getBoundingClientRect().height);
+  return { total: Math.round(c.getBoundingClientRect().height),
+           head: h('.match-head'), side: h('.side'), foot: h('.match-foot') };
 })()`);
-console.log('  single-column card:', wideCard + 'px');
-check('a full-width card is well under the old ~160px', wideCard !== null && wideCard < 115,
-  wideCard + 'px');
+console.log('  single-column card:', JSON.stringify(wideCard));
+check('a full-width card is well under the old ~160px', wideCard && wideCard.total < 115,
+  wideCard && wideCard.total + 'px');
+// Before compaction: head 30, side 47 each, foot 27 -> a ~160px card with
+// nothing in it.
+check('the head is tighter than the old 30px', wideCard && wideCard.head <= 30,
+  wideCard && wideCard.head + 'px');
+check('a player row is far shorter than the old 47px, at full width too',
+  wideCard && wideCard.side <= 32, wideCard && wideCard.side + 'px');
 await ev(`(() => { [...document.querySelectorAll('.tab')].find(t=>t.dataset.view==='matches').click(); })()`);
 await wait(2500);
 // A long unbroken surname is wider than a quarter-width column and has no
@@ -282,6 +306,6 @@ check('no error logs', errs.length===0, errs.length+'');
 
 console.log(' ', fixtureReport(fx));
 console.log(fail ? `\nFAILURES: ${fail}` : '\nALL CHECKS PASSED');
-ws.close(); chrome.kill(); server.close();
+ws.close(); killChrome(); server.close();
 try { fs.rmSync(profile, { recursive:true, force:true }); } catch {}
 process.exit(fail?1:0);

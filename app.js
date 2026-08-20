@@ -173,6 +173,9 @@ const state = {
   // 'results' | 'yours' | 'world' | 'race' — the real draw, your own sheet, or
   // one derived from a ranking. All four are the same tree.
   drawMode: 'results',
+  // Which round the drawn tree starts at: null = pick one to suit how far the
+  // tournament has got, 'all' = the whole draw, otherwise a round name.
+  fromRound: null,
   // cat -> { matchCode: entryKey } — who you think wins each match.
   predict: {},
   // cat -> ISO date the sheet was last touched, stamped onto the PNG export.
@@ -723,6 +726,62 @@ function entriesInRange(draw, from, to) {
  * Round-by-round path for an entry: the match it plays (if any) and the pool of
  * opponents it could still meet.
  */
+/* ---- folding away rounds that are over ----
+
+   By the quarter-finals a full bracket is mostly empty space. The spacing law
+   is centre(c, r) = (r + 0.5) * 2^c * SLOT, so each round doubles the gap
+   between its cards: the four QF cards sit 16 slots apart because they have to
+   line up with 32 first-round matches that are no longer interesting.
+
+   Hiding the early columns alone would change nothing — the gaps come from the
+   geometry, not from the columns being drawn. So the tree is re-laid out from
+   the chosen round, which becomes the new column zero, and its cards sit one
+   slot apart again. It is still a real bracket, just a smaller one. */
+
+function colOfRound(draw, round) {
+  for (let c = 0; c <= draw.maxCol; c++) {
+    const m = draw.cells[c + '-0'];
+    if (m && m.roundName === round) return c;
+  }
+  return -1;
+}
+
+/** The earliest round that still has a match to play. */
+function autoFromCol(draw) {
+  for (let c = 0; c <= draw.maxCol; c++) {
+    const n = cellsInCol(draw, c);
+    for (let r = 0; r < n; r++) {
+      const m = draw.cells[c + '-' + r];
+      if (!m) continue;
+      // A bye is not a fixture, so an unplayed one must not hold the view back
+      // on a round that is otherwise finished.
+      if (c === 0 && draw.byeCodes.has(String(m.code))) continue;
+      if (m.winner !== 1 && m.winner !== 2) return c;
+    }
+  }
+  // Everything is played. Stop short of the final: one card is not a bracket.
+  return Math.max(0, draw.maxCol - 2);
+}
+
+/** Which column the drawn tree should start at. */
+function fromCol(draw) {
+  if (!draw) return 0;
+  const pick = state.fromRound;
+  if (pick === 'all') return 0;
+  const c = pick ? colOfRound(draw, pick) : autoFromCol(draw);
+  // Never fold past the semi-finals, and never off the end of a short draw.
+  return Math.max(0, Math.min(c < 0 ? 0 : c, draw.maxCol - 1, ROUND_ORDER.length - 2));
+}
+
+/** Auto is deliberately capped at the quarter-finals — see autoFromCol. */
+function resolvedFromRound(draw) {
+  if (!draw) return 'all';
+  const c = fromCol(draw);
+  if (c === 0) return 'all';
+  const m = draw.cells[c + '-0'];
+  return (m && m.roundName) || ROUND_ORDER[c] || 'all';
+}
+
 function pathFor(draw, key) {
   const r0 = findStart(draw, key);
   if (r0 < 0) return [];
@@ -865,9 +924,37 @@ function sortByRank(draw, keys) {
   });
 }
 
+/**
+ * Retirements and walkovers. BWF puts these in `scoreStatus`, not in the score:
+ * 0 Normal, 1 Walkover, 2 Retired, with its own wording in `scoreStatusValue`.
+ *
+ * They have to be said out loud, because the score alone misrepresents them. A
+ * walkover carries no games whatsoever, so the card is indistinguishable from a
+ * fixture that has not been played; a retirement carries a part-played game
+ * (`8-18`) that reads as a scoreline nobody can explain.
+ */
+const SCORE_NOTE = {
+  1: { short: 'W/O', long: 'Walkover', cls: 'is-wo' },
+  2: { short: 'RET', long: 'Retired',  cls: 'is-ret' },
+};
+
+function scoreNote(m) {
+  const n = m && SCORE_NOTE[m.scoreStatus];
+  if (!n) return null;
+  // Prefer BWF's own wording where they ship it, so the page agrees with the
+  // official result rather than paraphrasing it.
+  return m.scoreStatusValue ? Object.assign({}, n, { long: m.scoreStatusValue }) : n;
+}
+
 function statusOf(m) {
   const s = (m.matchStatus || '').toUpperCase();
-  if (s === 'F') return { cls: 'finished', text: 'Finished' };
+  // 'O' is BWF's "Off court": played out, result not yet signed off. It arrives
+  // with a winner and a full score, so treating it as unplayed put "Scheduled"
+  // on finished matches.
+  const done = s === 'F' || s === 'O' || m.winner === 1 || m.winner === 2;
+  const note = scoreNote(m);
+  if (done && note) return { cls: 'finished ' + note.cls, text: note.long };
+  if (done) return { cls: 'finished', text: 'Finished' };
   if (s === 'L' || s === 'P') return { cls: 'live', text: 'Live' };
   if (m.matchTime) return { cls: 'upcoming', text: 'Scheduled' };
   return { cls: 'upcoming', text: 'Not scheduled' };
@@ -890,6 +977,11 @@ function sideRow(m, which, opts) {
     return `<b class="${own > opp ? 'won' : ''}">${esc(own)}</b>`;
   }).join('');
 
+  // The mark belongs to the player it happened to — the one who retired, or who
+  // did not come out at all — which is the side that lost.
+  const note = scoreNote(m);
+  const mark = note && isLose ? `<b class="mk">${note.short}</b>` : '';
+
   // Per player rather than via cardName(), because each half of a pair carries
   // its own "one of mine" highlight.
   const names = team && team.players && team.players.length
@@ -905,7 +997,7 @@ function sideRow(m, which, opts) {
       ${flagImg(team && team.countryFlagUrl, team && team.countryCode)}
       <span class="seed">${esc(seedText(seed))}</span>
       <span class="nm"${full}>${names}<small class="sub">${esc((team && team.countryCode) || '')}</small></span>
-      <span class="sets">${scores}</span>
+      <span class="sets">${scores}${mark}</span>
     </div>`;
 }
 
@@ -1820,6 +1912,8 @@ function bracketSide(m, which, mine, isBye) {
   const pts = (m.score || []).filter(g => (which === 1 ? g.home : g.away) != null)
     .map(g => (which === 1 ? g.home : g.away)).join(' ');
   const named = team && team.players && team.players.length;
+  const note = scoreNote(m);
+  const mark = note && isLose ? `<i class="mk">${note.short}</i>` : '';
 
   const cls = ['bnode-side', isWin ? 'win' : '', isLose ? 'lose' : '', mine ? 'mine' : ''].join(' ');
   return `<div class="${cls}">
@@ -1827,7 +1921,7 @@ function bracketSide(m, which, mine, isBye) {
     <span class="bs">${esc(seedText(seed))}</span>
     <span class="bn">${named ? esc(cardName(team))
       : `<span class="muted">${isBye ? 'Bye' : '—'}</span>`}</span>
-    <span class="bsc">${esc(pts)}</span>
+    <span class="bsc">${esc(pts)}${mark}</span>
   </div>`;
 }
 
@@ -1842,8 +1936,13 @@ function renderBracket() {
   }
 
   const cols = draw.maxCol + 1;
-  const rows0 = Object.keys(draw.cells).filter(k => k.startsWith('0-')).length;
-  const width  = brLeft(cols - 1) + BR.CARD_W + BR.PAD * 2;
+  // Everything below is drawn as if column `f` were column zero.
+  const f = fromCol(draw);
+  const colX = c => brLeft(c - f);
+  const rowY = (c, r) => brCentre(c - f, r);
+
+  const rows0 = cellsInCol(draw, f);
+  const width  = colX(cols - 1) + BR.CARD_W + BR.PAD * 2;
   const height = rows0 * SLOT + BR.PAD * 2 + BR.LABEL_H;
 
   canvas.style.width = width + 'px';
@@ -1853,24 +1952,24 @@ function renderBracket() {
   const ox = BR.PAD, oy = BR.PAD + BR.LABEL_H;
 
   // column headings
-  for (let c = 0; c < cols; c++) {
+  for (let c = f; c < cols; c++) {
     const any = draw.cells['' + c + '-0'];
     const name = (any && any.roundName) || ROUND_ORDER[c] || '';
     const lab = el('div', 'bcol-label', esc(ROUND_LABEL[name] || name));
-    lab.style.left = (ox + brLeft(c)) + 'px';
+    lab.style.left = (ox + colX(c)) + 'px';
     lab.style.top = BR.PAD + 'px';
     lab.style.width = BR.CARD_W + 'px';
     frag.appendChild(lab);
   }
 
   // elbow connectors: feeders (c-1, 2r) and (c-1, 2r+1) → (c, r)
-  for (let c = 1; c < cols; c++) {
-    const n = Object.keys(draw.cells).filter(k => k.startsWith(c + '-')).length;
+  for (let c = f + 1; c < cols; c++) {
+    const n = cellsInCol(draw, c);
     for (let r = 0; r < n; r++) {
-      const y1 = oy + brCentre(c - 1, 2 * r);
-      const y2 = oy + brCentre(c - 1, 2 * r + 1);
-      const yc = oy + brCentre(c, r);
-      const x0 = ox + brLeft(c - 1) + BR.CARD_W;
+      const y1 = oy + rowY(c - 1, 2 * r);
+      const y2 = oy + rowY(c - 1, 2 * r + 1);
+      const yc = oy + rowY(c, r);
+      const x0 = ox + colX(c - 1) + BR.CARD_W;
       const xm = x0 + BR.CONN_W / 2;
 
       const line = (l, t, w, h) => {
@@ -1889,12 +1988,13 @@ function renderBracket() {
   for (const [k, m] of Object.entries(draw.cells)) {
     if (!m) continue;
     const [c, r] = k.split('-').map(Number);
+    if (c < f) continue;
     const isBye = c === 0 && draw.byeCodes.has(String(m.code));
     const mine1 = teamIsMine(m.team1), mine2 = teamIsMine(m.team2);
 
     const node = el('div', 'bnode' + (mine1 || mine2 ? ' is-mine' : '') + (isBye ? ' is-bye' : ''));
-    node.style.left = (ox + brLeft(c)) + 'px';
-    node.style.top = (oy + brCentre(c, r) - BR.CARD_H / 2) + 'px';
+    node.style.left = (ox + colX(c)) + 'px';
+    node.style.top = (oy + rowY(c, r) - BR.CARD_H / 2) + 'px';
     node.style.width = BR.CARD_W + 'px';
     node.style.height = BR.CARD_H + 'px';
     node.innerHTML = bracketSide(m, 1, mine1, isBye) + bracketSide(m, 2, mine2, isBye);
@@ -1992,7 +2092,14 @@ function fitBracket(cam) {
  */
 function jumpToMine(cam) {
   cam = cam || mapFor();
-  const node = $(cam.canvas + ' ' + cam.node + '.is-mine');
+  let node = $(cam.canvas + ' ' + cam.node + '.is-mine');
+  // Your player may have gone out in a round that is currently folded away.
+  // Asking to be taken to them and being taken nowhere is the worst answer, so
+  // unfold the draw and look again — the button says what it will do.
+  if (!node && state.fromRound !== 'all' && fromCol(state.draws[state.drawCat]) > 0) {
+    setFromRound('all');
+    node = $(cam.canvas + ' ' + cam.node + '.is-mine');
+  }
   if (!node) { applyTransform(cam); return; }
   const vp = $(cam.vp).getBoundingClientRect();
   if (cam.zoom < 0.5) cam.zoom = 1;
@@ -2297,9 +2404,13 @@ function renderPredict() {
   };
 
   const cols = draw.maxCol + 1;
-  const rows0 = cellsInCol(draw, 0);
+  const f = fromCol(draw);
+  const colX = c => brLeft(c - f);
+  const rowY = (c, r) => brCentre(c - f, r);
+
+  const rows0 = cellsInCol(draw, f);
   // One extra column for the champion card.
-  const width  = brLeft(cols) + BR.CARD_W + BR.PAD * 2;
+  const width  = colX(cols) + BR.CARD_W + BR.PAD * 2;
   const height = rows0 * SLOT + BR.PAD * 2 + BR.LABEL_H;
   canvas.style.width = width + 'px';
   canvas.style.height = height + 'px';
@@ -2307,25 +2418,25 @@ function renderPredict() {
   const frag = document.createDocumentFragment();
   const ox = BR.PAD, oy = BR.PAD + BR.LABEL_H;
 
-  for (let c = 0; c < cols; c++) {
+  for (let c = f; c < cols; c++) {
     const any = draw.cells['' + c + '-0'];
     const name = (any && any.roundName) || ROUND_ORDER[c] || '';
     const lab = el('div', 'bcol-label', esc(ROUND_LABEL[name] || name));
-    lab.style.cssText = `left:${ox + brLeft(c)}px;top:${BR.PAD}px;width:${BR.CARD_W}px`;
+    lab.style.cssText = `left:${ox + colX(c)}px;top:${BR.PAD}px;width:${BR.CARD_W}px`;
     frag.appendChild(lab);
   }
   const champLab = el('div', 'bcol-label', 'Champion');
-  champLab.style.cssText = `left:${ox + brLeft(cols)}px;top:${BR.PAD}px;width:${BR.CARD_W}px`;
+  champLab.style.cssText = `left:${ox + colX(cols)}px;top:${BR.PAD}px;width:${BR.CARD_W}px`;
   frag.appendChild(champLab);
 
   // elbow connectors, plus one more into the champion card
-  for (let c = 1; c <= cols; c++) {
+  for (let c = f + 1; c <= cols; c++) {
     const n = c === cols ? 1 : cellsInCol(draw, c);
     for (let r = 0; r < n; r++) {
-      const y1 = oy + brCentre(c - 1, 2 * r);
-      const y2 = oy + brCentre(c - 1, 2 * r + 1);
-      const yc = oy + brCentre(c, r);
-      const x0 = ox + brLeft(c - 1) + BR.CARD_W;
+      const y1 = oy + rowY(c - 1, 2 * r);
+      const y2 = oy + rowY(c - 1, 2 * r + 1);
+      const yc = oy + rowY(c, r);
+      const x0 = ox + colX(c - 1) + BR.CARD_W;
       const xm = x0 + BR.CONN_W / 2;
       const line = (l, t, w, h) => {
         const d = el('div', 'bline');
@@ -2334,7 +2445,7 @@ function renderPredict() {
       };
       if (c === cols) {
         // The Final feeds one card, so it is a straight run, not an elbow.
-        line(x0, oy + brCentre(c - 1, 0), BR.CONN_W, 1);
+        line(x0, oy + rowY(c - 1, 0), BR.CONN_W, 1);
       } else {
         line(x0, y1, BR.CONN_W / 2, 1);
         line(x0, y2, BR.CONN_W / 2, 1);
@@ -2344,7 +2455,7 @@ function renderPredict() {
     }
   }
 
-  for (let c = 0; c <= draw.maxCol; c++) {
+  for (let c = f; c <= draw.maxCol; c++) {
     const n = cellsInCol(draw, c);
     for (let r = 0; r < n; r++) {
       const k = c + '-' + r;
@@ -2364,7 +2475,7 @@ function renderPredict() {
         + (editable && live ? '' : ' is-locked')
         + (mark ? ' is-' + mark : ''));
       node.style.cssText =
-        `left:${ox + brLeft(c)}px;top:${oy + brCentre(c, r) - BR.CARD_H / 2}px;` +
+        `left:${ox + colX(c)}px;top:${oy + rowY(c, r) - BR.CARD_H / 2}px;` +
         `width:${BR.CARD_W}px;height:${BR.CARD_H}px`;
       const realKey = res.verdict[k + ':real'];
       const reallyWon = realKey
@@ -2399,7 +2510,7 @@ function renderPredict() {
   // champion card
   const champ = el('div', 'pnode pchamp' + (res.champion && teamIsMine(res.champion) ? ' is-mine' : ''));
   champ.style.cssText =
-    `left:${ox + brLeft(cols)}px;top:${oy + brCentre(draw.maxCol, 0) - BR.CARD_H / 2}px;` +
+    `left:${ox + colX(cols)}px;top:${oy + rowY(draw.maxCol, 0) - BR.CARD_H / 2}px;` +
     `width:${BR.CARD_W}px;height:${BR.CARD_H}px`;
   if (res.champion) champ.title = teamName(res.champion);
   champ.innerHTML = res.champion
@@ -2433,8 +2544,32 @@ function renderDraw() {
   paintPredictBar(null, true);
 }
 
+/**
+ * The chips show the round actually being drawn, so the automatic choice is
+ * visible rather than mysterious: land on QF and the QF chip is lit.
+ */
+function paintRoundChips() {
+  const draw = state.draws[state.drawCat];
+  const now = resolvedFromRound(draw);
+  $$('.rfrom').forEach(b => {
+    b.classList.toggle('is-active', b.dataset.round === now);
+    // A round the draw never reaches, or one that is not foldable, is no use.
+    b.disabled = !!draw && b.dataset.round !== 'all' && colOfRound(draw, b.dataset.round) < 1;
+  });
+}
+
+function setFromRound(round) {
+  state.fromRound = round === 'all' ? 'all' : round;
+  // The canvas changes size dramatically, so a pan kept from the old layout
+  // would leave you staring at empty space. Zoom is left alone: that is a
+  // deliberate choice the reader made about text size.
+  CAM.pan.x = CAM.pan.y = 24;
+  renderDraw();
+  applyTransform(CAM);
+}
+
 const DRAW_HINTS = {
-  results: 'Scroll or drag to move · <kbd>+</kbd>&thinsp;/&thinsp;<kbd>&minus;</kbd> zoom · <kbd>0</kbd> 100% · <kbd>F</kbd> fit · click a match for the head-to-head',
+  results: 'Scroll or drag to move · <kbd>+</kbd>&thinsp;/&thinsp;<kbd>&minus;</kbd> zoom · <kbd>F</kbd> fit · click a match for the head-to-head',
   yours:   'Click the <b>W</b> beside whoever you think wins — they carry up the draw',
   world:   'Read-only: the better BWF World Ranking wins every match',
   race:    'Read-only: the better Race to Finals standing wins every match',
@@ -2444,6 +2579,7 @@ const DRAW_HINTS = {
 function paintPredictBar(res, chromeOnly) {
   $$('.dcat').forEach(b => b.classList.toggle('is-active', b.dataset.dcat === state.drawCat));
   $$('.pmode').forEach(b => b.classList.toggle('is-active', b.dataset.pmode === state.drawMode));
+  paintRoundChips();
 
   const results = state.drawMode === 'results';
   const auto = !results && state.drawMode !== 'yours';
@@ -3039,6 +3175,9 @@ async function openH2H(teamA, teamB) {
       const b = mineFirst ? g.team2 : g.team1;
       return `<span class="g"><i class="${a > b ? 'w' : ''}">${esc(a)}</i>-<i class="${b > a ? 'w' : ''}">${esc(b)}</i></span>`;
     }).join('');
+    // `result` carries scoreStatus too, so a past meeting that ended early is
+    // not silently presented as a normal win with an odd scoreline.
+    const note = scoreNote(res);
     const who = res.winner === 1 || res.winner === 2
       ? cardName(res.winner === aSide ? teamA : teamB)
       : null;
@@ -3046,8 +3185,9 @@ async function openH2H(teamA, teamB) {
     return `<div class="h2h-m">
         <span class="when">${esc(when)}</span>
         <span class="what"><b>${esc(tmt)}</b>
-          <small>${esc(info.roundName || '')}${who ? ' &middot; ' + esc(who) + ' won' : ''}</small></span>
-        <span class="games">${games}</span>
+          <small>${esc(info.roundName || '')}${who ? ' &middot; ' + esc(who) + ' won' : ''}${
+            note ? ' &middot; ' + esc(note.long) : ''}</small></span>
+        <span class="games">${games}${note ? `<span class="gmk">${note.short}</span>` : ''}</span>
       </div>`;
   }).join('');
 
@@ -3622,6 +3762,7 @@ async function init() {
   $$('.cat').forEach(b => b.onclick = () => toggleCat(b.dataset.cat));
   $$('.dcat').forEach(b => b.onclick = () => setDrawCat(b.dataset.dcat));
   $$('.pmode').forEach(b => b.onclick = () => setDrawMode(b.dataset.pmode));
+  $$('.rfrom').forEach(b => b.onclick = () => setFromRound(b.dataset.round));
 
   // --- predictions ---
   state.predict = store.read('predict', {}) || {};

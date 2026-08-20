@@ -9,7 +9,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { installFixtures, fixtureCount, FIX_DIR } from './fixtures.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -33,6 +33,16 @@ const chrome = spawn(CHROME, ['--no-first-run','--no-default-browser-check',
   '--window-position=-2400,0','--window-size=1600,1100',
   `--user-data-dir=${profile}`, `--remote-debugging-port=${DBG}`, 'about:blank']);
 chrome.stderr.on('data', () => {});
+
+/* Chrome's launcher is not the browser on Windows: kill() reaps the process we
+   spawned while the real browser lives on holding the debugging port, so the
+   next run of this suite cannot attach. Take the whole tree down. */
+function killChrome() {
+  try { spawnSync('taskkill', ['/PID', String(chrome.pid), '/T', '/F'], { stdio: 'ignore' }); }
+  catch { /* fall through */ }
+  try { chrome.kill(); } catch {}
+}
+
 let wsUrl = null;
 for (let i = 0; i < 60 && !wsUrl; i++) {
   await new Promise(r => setTimeout(r, 400));
@@ -144,5 +154,5 @@ await step('the orientation pair, both ways round', 8000, `(async () => {
 })()`);
 
 console.log(`\ndone — ${fixtureCount()} fixtures in ${FIX_DIR}`);
-ws.close(); chrome.kill(); server.close();
+ws.close(); killChrome(); server.close();
 try { fs.rmSync(profile, { recursive: true, force: true }); } catch {}

@@ -172,6 +172,18 @@
       <button class="pmode" data-pmode="world" type="button">By world ranking</button>
       <button class="pmode" data-pmode="race" type="button">By race ranking</button>
       <span class="muted bracket-hint" id="drawHint"></span>
+
+      <!-- Fold away rounds that are over. By the quarter-finals the tree is
+           mostly empty space, so the view starts at whichever round is still
+           being played unless you say otherwise. -->
+      <span class="rounds" role="group" aria-label="Start the draw at a round">
+        <span class="rounds-label">Show from</span>
+        <button class="rfrom" data-round="all" type="button">All</button>
+        <button class="rfrom" data-round="R32" type="button">R32</button>
+        <button class="rfrom" data-round="R16" type="button">R16</button>
+        <button class="rfrom" data-round="QF" type="button">QF</button>
+        <button class="rfrom" data-round="SF" type="button">SF</button>
+      </span>
     </div>
     <div class="bracket-viewport" id="drawViewport">
       <div class="bracket-canvas" id="drawCanvas"></div>

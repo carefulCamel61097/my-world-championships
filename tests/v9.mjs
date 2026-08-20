@@ -4,7 +4,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { installFixtures, fixtureReport } from './fixtures.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -30,6 +30,16 @@ const chrome = spawn(CHROME, ['--no-first-run','--no-default-browser-check',
   '--window-position=-2400,0','--window-size=1500,1050',
   `--user-data-dir=${profile}`, `--remote-debugging-port=${DBG}`, 'about:blank']);
 chrome.stderr.on('data', () => {});
+
+/* Chrome's launcher is not the browser on Windows: kill() reaps the process we
+   spawned while the real browser lives on holding the debugging port, so the
+   next run of this suite cannot attach. Take the whole tree down. */
+function killChrome() {
+  try { spawnSync('taskkill', ['/PID', String(chrome.pid), '/T', '/F'], { stdio: 'ignore' }); }
+  catch { /* fall through */ }
+  try { chrome.kill(); } catch {}
+}
+
 let wsUrl = null;
 for (let i = 0; i < 60 && !wsUrl; i++) {
   await new Promise(r => setTimeout(r, 400));
@@ -77,6 +87,12 @@ const check = (l, c, x='') => { if(!c) fail++; console.log(`${c?'PASS':'FAIL'}  
 await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] }, sessionId);
 await send('Page.navigate', { url: `http://localhost:${PORT}/#c=ms&v=predict` }, sessionId);
 await wait(12000);
+
+// The draw now opens at whichever round is still being played, so a suite
+// asserting the *whole* tree has to ask for the whole tree. Clicking the chip
+// rather than poking state keeps the control itself exercised too.
+await ev(`document.querySelector('.rfrom[data-round="all"]').click()`);
+await wait(800);
 
 console.log('=== dark BWF red is the default even on a light system ===');
 const theme = await ev(`(() => {
@@ -612,6 +628,6 @@ check('no error logs', errs.length===0, errs.length+'');
 
 console.log(' ', fixtureReport(fx));
 console.log(fail ? `\nFAILURES: ${fail}` : '\nALL CHECKS PASSED');
-ws.close(); chrome.kill(); server.close();
+ws.close(); killChrome(); server.close();
 try { fs.rmSync(profile, { recursive:true, force:true }); } catch {}
 process.exit(fail?1:0);

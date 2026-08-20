@@ -10,6 +10,8 @@
  * Areas exist so that a CSS tweak does not have to re-run the bracket maths.
  */
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,16 +21,54 @@ const AREAS = {
   unit:     ['test_bracket', 'test_surname'],
   matches:  ['v10', 'v11', 'v12', 'final'],
   players:  ['v2', 'v3', 'v4', 'v5', 'v7', 'v8'],
-  draw:     ['v2', 'v9', 'v11'],
+  draw:     ['v2', 'v9', 'v11', 'v14'],
   predict:  ['v9', 'v11'],
   names:    ['test_surname', 'v8', 'v11', 'final'],
   schedule: ['v10', 'v11', 'v6', 'v7'],
   nav:      ['v11', 'v7', 'v6'],
   live:     ['v12'],
   h2h:      ['v13', 'v2', 'v3'],
+  fold:     ['v14', 'v9'],
   all:      ['test_bracket', 'test_surname', 'v2', 'v3', 'v4', 'v5', 'v6',
-             'v7', 'v8', 'v9', 'v10', 'v11', 'v12', 'v13', 'final'],
+             'v7', 'v8', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'final'],
 };
+
+/**
+ * Every suite runs Chrome on a throwaway profile and deletes it on the way out,
+ * but a suite that crashes — or whose Chrome outlives it — leaves one behind.
+ * They are ~50 MB each and they had quietly eaten 13 GB before anyone noticed,
+ * so sweep them before starting rather than trusting every exit path.
+ *
+ * Only directories older than an hour, so a suite running in another terminal
+ * does not have its profile pulled out from under it.
+ */
+function sweepProfiles() {
+  const tmp = os.tmpdir();
+  const cutoff = Date.now() - 60 * 60 * 1000;
+  let n = 0, bytes = 0;
+  let entries = [];
+  try { entries = fs.readdirSync(tmp).filter(f => f.startsWith('wc26-')); } catch { return; }
+  for (const f of entries) {
+    const dir = path.join(tmp, f);
+    try {
+      if (fs.statSync(dir).mtimeMs > cutoff) continue;
+      bytes += dirSize(dir);
+      fs.rmSync(dir, { recursive: true, force: true });
+      n++;
+    } catch { /* locked by a live Chrome; next run gets it */ }
+  }
+  if (n) console.log(`swept ${n} stale Chrome profile(s), ${(bytes / 1e9).toFixed(1)} GB
+`);
+}
+
+function dirSize(dir) {
+  let total = 0;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const f = path.join(dir, e.name);
+    try { total += e.isDirectory() ? dirSize(f) : fs.statSync(f).size; } catch {}
+  }
+  return total;
+}
 
 const args = process.argv.slice(2);
 const live = args.includes('--live');
@@ -51,6 +91,8 @@ if (record) env.FIXTURES = 'record';
 if (live) env.FIXTURES = 'live';
 
 console.log(`running ${suites.length} suite(s)${record ? ' [RECORDING]' : live ? ' [LIVE]' : ''}: ${suites.join(' ')}\n`);
+
+sweepProfiles();
 
 const t0 = Date.now();
 let failed = [];

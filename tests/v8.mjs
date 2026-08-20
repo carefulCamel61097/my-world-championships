@@ -1,7 +1,7 @@
 /* Both halves of a doubles pair must show the pair's ranking. */
 import http from 'node:http'; import fs from 'node:fs';
 import { fileURLToPath } from 'node:url'; import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { installFixtures, fixtureReport } from './fixtures.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), PORT = 8792, DBG = 9364;
 const CHROME='C:/Program Files/Google/Chrome/Application/chrome.exe';
@@ -15,6 +15,16 @@ const profile=path.join(process.env.TEMP,'wc26-v8-'+Date.now());
 const chrome=spawn(CHROME,['--no-first-run','--no-default-browser-check','--window-position=-2400,0',
   '--window-size=1400,1000',`--user-data-dir=${profile}`,`--remote-debugging-port=${DBG}`,'about:blank']);
 chrome.stderr.on('data',()=>{});
+
+/* Chrome's launcher is not the browser on Windows: kill() reaps the process we
+   spawned while the real browser lives on holding the debugging port, so the
+   next run of this suite cannot attach. Take the whole tree down. */
+function killChrome() {
+  try { spawnSync('taskkill', ['/PID', String(chrome.pid), '/T', '/F'], { stdio: 'ignore' }); }
+  catch { /* fall through */ }
+  try { chrome.kill(); } catch {}
+}
+
 let wsUrl=null; for(let i=0;i<60&&!wsUrl;i++){await new Promise(r=>setTimeout(r,400));
   try{wsUrl=(await(await fetch(`http://127.0.0.1:${DBG}/json/version`)).json()).webSocketDebuggerUrl;}catch{}}
 const ws=new WebSocket(wsUrl); await new Promise(r=>ws.addEventListener('open',r,{once:true}));
@@ -79,5 +89,5 @@ const errs=events.filter(e=>e.method==='Log.entryAdded'&&e.params.entry.level===
 check('no uncaught exceptions', exc.length===0, exc.length+'');
 check('no error logs', errs.length===0, errs.length+'');
 console.log(fail?`\nFAILURES: ${fail}`:'\nALL CHECKS PASSED');
-ws.close(); chrome.kill(); server.close();
+ws.close(); killChrome(); server.close();
 try{fs.rmSync(profile,{recursive:true,force:true});}catch{} process.exit(fail?1:0);
